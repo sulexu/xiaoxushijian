@@ -5,6 +5,17 @@
 一套**装在自己电脑上的**生活记录本。打卡、记账、物资、待办、日记、随笔、回忆书，
 都在一个窗口里。数字后端 + 桌面外壳，**零前端依赖**（原生 JS，没有框架、没有打包器）。
 
+## ⬇ 下载
+
+**[小煦拾简 2.5.1 安装包（Windows 64 位，130.8 MB）](https://github.com/sulexu/xiaoxushijian/releases/download/v2.5.1/xiaoxushijian-2.5.1-setup.exe)**
+
+双击 → 一路「下一步」→ 桌面出现「小煦拾简」→ 双击打开。
+
+> 安装包是**空程序**，里面没有任何人的数据。第一次打开会自己建数据库，
+> 数据存在你自己电脑上（默认 `文档\小煦拾简\数据\`）。
+>
+> 所有版本见 [Releases](https://github.com/sulexu/xiaoxushijian/releases)。
+
 ---
 
 ## 这是什么
@@ -49,7 +60,8 @@
 
 **方式一：安装包**（推荐）
 
-去 [Releases](../../releases) 下载 `小煦拾简-x.x.x-安装版.exe`，双击、一路下一步。
+从上面那个 **[下载链接](https://github.com/sulexu/xiaoxushijian/releases/download/v2.5.1/xiaoxushijian-2.5.1-setup.exe)**
+拿到 `xiaoxushijian-2.5.1-setup.exe`，双击、一路下一步。
 
 **方式二：免安装**
 
