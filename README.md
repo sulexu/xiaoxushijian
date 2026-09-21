@@ -15,6 +15,13 @@
 > 数据存在你自己电脑上（默认 `文档\小煦拾简\数据\`）。
 >
 > 所有版本见 [Releases](https://github.com/sulexu/xiaoxushijian/releases)。
+>
+> **⚠ 安装包文件名为什么是拼音**：GitHub Releases 的附件名会**剥掉非 ASCII 字符** ——
+> 中文名 `小煦拾简-2.5.1-安装版.exe` 上传后变成 `-2.5.1-.exe`。
+> 所以文件用 `xiaoxushijian`，而**程序名和桌面快捷方式仍然是「小煦拾简」**。
+>
+> 校验（SHA256，`137159822` 字节）：
+> `4F99291D3CDF0E58DC4C03722C2A291BAFE5FF9679702192FD690B8BF3E8FA33`（下载后可用 `certutil -hashfile 文件名 SHA256` 核对）
 
 ---
 

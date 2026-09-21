@@ -69,8 +69,9 @@
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
       "shortcutName": "小煦拾简",
-      "artifactName": "小煦拾简-${version}-安装版.${ext}",
+      "artifactName": "xiaoxushijian-${version}-setup.${ext}",
       "deleteAppDataOnUninstall": false
     }
-  }
+  },
+  "_为什么安装包名是拼音": "GitHub Releases 的附件名会剥掉非 ASCII 字符：中文名小煦拾简-2.5.1-安装版.exe 上传后变成 -2.5.1-.exe。所以安装包文件名用拼音 xiaoxushijian，而桌面快捷方式和程序名仍用中文（shortcutName / productName 不受影响）。"
 }
