@@ -1,0 +1,15 @@
+{
+  "name": "xiaoxu-shijian",
+  "version": "2.5.1",
+  "private": true,
+  "description": "小煦拾简 · 前端样式构建（Tailwind + daisyUI）",
+  "scripts": {
+    "css": "tailwindcss -i ./static/_src.css -o ./static/tw.css --minify",
+    "css:watch": "tailwindcss -i ./static/_src.css -o ./static/tw.css --watch"
+  },
+  "devDependencies": {
+    "@tailwindcss/cli": "^4.3.3",
+    "daisyui": "^5.7.42",
+    "tailwindcss": "^4.3.3"
+  }
+}

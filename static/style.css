@@ -1,0 +1,1487 @@
+/* ================================================================
+   日记/随笔竖排用的字体（2.4.8 起，2.5.1 改过做法）
+   ----------------------------------------------------------------
+   两套字体**自带**在 static/fonts/ 里，用户可在
+   ⚙ 设置 → 外观 → **日记字体** 里挑（值存在 settings 的 `diary_font`）：
+
+     · 瘦金体   shoujinti.ttf    12.1 MB
+     · 马善政行书 mashanzheng.ttf  5.6 MB
+     · （空）    不加载自带的，用系统书法体
+
+   ⚠⚠ **这里故意不写 @font-face** —— 实测过那条路不可靠：
+     同样的文件、同样的规则，裸页面里能注册（document.fonts.size = 1），
+     但在应用页面里一直是 0、字体静默回退成华文行楷。
+     用户的原话是「你日记那里还是用的华文行楷」—— 就是被这个静默回退骗的。
+     现在改成 **core.js 里用 FontFace API 加载**（applyDiaryFont / loadDiaryFontFile），
+     加载成功失败都有明确 status、失败还能报出来。
+     **别在这里把 @font-face 加回来** —— 两条路会打架，而且那条是坏的那条。
+
+   ⚠ 授权（留着，以后有人问"这字体哪来的"）：
+     · 瘦金体：github.com/erza-di/shufa-generator → 其 README 注明源自
+       github.com/caicaibuchicai/textFont，**MIT**（可再分发）
+     · 马善政行书：Google Fonts 的 **OFL**（可再分发）
+   ⚠ 只在日记/随笔的**竖排正文**用；编辑框仍是等宽字体（写字要清楚）。
+================================================================ */
+
+/* ================================================================
+   主题变量
+   ----------------------------------------------------------------
+   三套配色 × 深浅两模式。切换靠 <html data-theme="dark" data-palette="青瓷">，
+   所有颜色都从这里取 —— 别在下面写死十六进制，不然换主题就会漏一块。
+
+   注意：**图表配色也跟着主题走**（app.js 的 chartPalette / colorOf）——
+   从主强调色推出来，不写死十六进制。同一个类别在任何主题下
+   相对位置不变，但整组颜色会跟着配色换。
+================================================================ */
+html{font-size:var(--fs)}   /* rem 的基准 = 字号设置，改一处全站跟着变 */
+:root{
+  /* 中性 */
+  --bg:#eef1f6;--card:#fff;--line:#e3e9f2;--soft:#f8fafc;--soft2:#f1f5f9;
+  --txt:#1f2933;--txt2:#475569;--mut:#7b8794;
+  /* 顶栏 */
+  --top-bg:#1e3a8a;--top-fg:#dbeafe;--top-mut:#c7dbff;
+  --top-on-bg:#fff;--top-on-fg:#1e3a8a;
+  --top-tab:rgba(255,255,255,.12);--top-tab-h:rgba(255,255,255,.22);
+  /* 语义色 */
+  --blue:#2563eb;--blue-d:#1d4ed8;--blue-l:#eef6ff;--blue-l2:#bfdbfe;
+  --green:#059669;--green-d:#1a7f37;--green-l:#e2f4ea;--green-l2:#a9dfc0;
+  --red:#dc2626;--red-d:#b91c1c;--red-l:#fee2e2;--red-l2:#fecaca;
+  --amber:#f59e0b;--amber-d:#b45309;--amber-l:#fef3c7;--amber-l2:#fde68a;
+  --violet:#8b5cf6;--violet-d:#6d28d9;--violet-l:#ede9fe;
+  /* 字体与动效 */
+  --font-base:"Microsoft YaHei","PingFang SC",system-ui,sans-serif;
+  --font:var(--font-base);
+  --fs:14px;--radius:14px;
+  /* 让浏览器知道现在是浅色主题：日期/时间选择器、下拉列表、滚动条
+     这些「原生控件」才会跟着变，不然深色下它们还是白的。
+
+     ⚠ **深色那一半一直漏了**（2.3.7 才发现）—— 这里只写了 light，
+       下面没有任何一条把它切回 dark。于是深色主题下：
+         · 滚动条是**整条纯白的**，上面一个深灰滑块（用户截图里那根）
+         · 日期选择器、下拉列表弹出来是白的
+       一条规则的事，漏了整整五个版本。 */
+  color-scheme:light;
+}
+[data-theme="dark"]{color-scheme:dark}
+
+/* ---- 等宽数字 ----
+   全站数字默认走比例字体：1 比 8 窄、7 比 0 窄，于是
+   一列金额、一列完成率、一列日期全都对不齐，看着就是"没排过版"。
+   tabular-nums 让每个数字占同样的宽度，数字列自动成一条竖线。
+   只影响数字，中文和标点不受影响，所以可以直接挂在 body 上。 */
+body{font-variant-numeric:tabular-nums;font-feature-settings:"tnum" 1}
+/* KPI 的大数字：再加一点**紧字距**。大字号下默认字距会显得松散，
+   收紧一点点（-0.5px）数字才像一个整体，而不是一串分开的字符。 */
+.kpi .num,.hero .hs .v{letter-spacing:-.5px}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--txt);
+  font-family:var(--font)}
+/* ---- 自定义背景图 ----
+   两层：::before 放照片（fixed，所以滚页面时它不动），::after 压一层遮罩。
+   遮罩是必须的 —— 照片深浅不一，没有它字会忽明忽暗读不清；而遮罩用的就是
+   **当前主题的底色**，所以深色、浅色、四套配色全都自动跟着走，不用逐个去调。
+
+   ⚠ 用 z-index:-1 而不是 0：0 的话这两层会盖在正文上面（有定位的元素
+   永远画在普通流内容之上），整页就全被糊住了。负值能落在「画布底色之上、
+   正文之下」那一格。 */
+/* --bg-dim 是那层遮罩的浓度。
+   35% → 20%（2.3.5：浅色主题下遮罩用的是主题底色，本身就很浅，
+   一上来就把照片洗白）→ **10%**（2.3.6：用户要「调得很薄」）。
+   遮罩现在只干一件事：把照片的明暗拉平一点，别让字忽明忽暗。
+   衬托卡片、区分层次这些活儿，交给卡片自己的不透明度和描边。 */
+:root{--bg-img:none;--bg-dim:.1;--bg-blur:0px}
+body::before,body::after{content:"";position:fixed;inset:0;pointer-events:none;display:none}
+:root.has-bg body::before,:root.has-bg body::after{display:block}
+/* ⚠⚠ 2.5.1 修：**有背景图时 body 必须透明**，否则背景图被 body 自己的底色盖住。
+   为什么：`body::before` 是 `z-index:-2`、`body::after` 是 `-1` ——
+   负 z-index 的伪元素画在**自己所属元素（body）的背景之下**。
+   而第 78 行给 body 设了 `background:var(--bg)`（不透明）。
+   于是两张伪元素图都被 body 的底色挡得严严实实 —— 现象就是"背景图没了"，
+   而 `<html class="has-bg">` 和 `--bg-img` 都明明设上了（那次排查差点被这个骗过去）。
+   遮罩那层（`body::after`）本身就是 `var(--bg)` 加 `--bg-dim` 透明度，
+   所以这里把 body 底色去掉、视觉上**不会有任何变化**，只是让出下面两层。
+   ⚠ 别删这条 —— 删了背景图立刻又看不见。 */
+:root.has-bg body{background:transparent}
+body::before{z-index:-2;background-image:var(--bg-img);background-size:var(--bg-size,cover);
+  background-position:center;filter:blur(var(--bg-blur));
+  /* 模糊会把边缘糊出一圈半透明，放大一点点把它顶出可视区。
+     ⚠ 只在 cover（铺满）时放大 —— contain / 居中时图本来就完整，
+       再放大就跑到框外面去了。倍率由 JS 按填充方式写。 */
+  transform:scale(var(--bg-zoom,1.06))}
+/* 纯色壁纸模式：直接拿用户选的颜色当页底，照片那两层不显示 */
+:root.solid-bg body{background:var(--bg-solid)}
+body::after{z-index:-1;background:var(--bg);opacity:var(--bg-dim)}
+
+/* ---- ⚠ 2.3.7：毛玻璃（backdrop-filter）**整个去掉了**，别再请回来 ----
+ *
+ * 2.3.5 和 2.3.6 各修过一次「全屏雾蒙蒙」，两次都在调参数：遮罩 35%→20%→10%、
+ * 模糊 16px→6px、卡片不透明度加下限。**三次都不管用**，因为方向就错了 ——
+ * 雾不是遮罩给的，是 `backdrop-filter` 自己造出来的：
+ *   · blur 把照片的高频细节抹平，剩下一片没有纹理的平均色，那就是「雾」的定义
+ *   · saturate(1.2) 再把这个平均色往灰白推一把
+ * 一个 60% 不透明、背后还在做高斯模糊的卡片，看起来永远是一块毛玻璃板。
+ * 遮罩调到 0 都救不回来。
+ *
+ * 用户 2026-09-18 定的是「卡片改实心纸面，照片只从卡片缝隙露出来」。
+ * 这也是 SpringNote / Linear / Windows 原生那一派的做法：**内容区实心，
+ * 背景只从留白和卡片之间的缝里透出来**。于是：
+ *   · 卡片 = 实色 --card ＋ 一根发丝线（颜色由 --card-line 按主题兑水）
+ *   · 「通透」滑块仍然在，但它现在调的是**卡片本身的不透明度**，
+ *     照片透过卡片是一层**清晰的、被压淡的**影像，不是一片糊的色块
+ *   · 顺带甩掉几十个 backdrop-filter，滚动明显更跟手
+ *
+ * 想恢复毛玻璃的话，先想清楚这条：**「雾蒙蒙」的投诉修过三次了。** */
+
+/* 深色下卡片要比页面底**更暗一点**才不会像浮起来的一块板。
+   （--card 已经在配色区里定好了，这里只是补一层极浅的投影，
+     让卡片在照片上仍然有"边界"，而不是靠模糊。） */
+:root.bg-glass .card,
+:root.bg-glass .kpi,
+:root.bg-glass .daypanel,
+:root.bg-glass .modal-card,
+:root.bg-glass .nside,
+:root.bg-glass .mhead,
+:root.bg-glass .minput{box-shadow:0 1px 2px rgba(0,0,0,.06)}
+
+/* 通透时卡片也得**看得见边界**（用户要的「卡片框勾勒出来」）。
+   ⚠ 这里以前是 `border-color:transparent` —— 撤掉描边只留一层投影。
+     撤掉的理由是「照片一透上来，那根线就成了硬邦邦的方框」。
+     但撤掉之后卡片和背景糊成一片，加上那层蒙版，整屏就是一团雾。
+     正解不是不要线，是**换一根压得住照片的线**：
+     平时用 --line（浅色主题里是极淡的灰），通透时换成「按主题文字色兑水」
+     —— 浅色主题出深灰线、深色主题出浅灰线，两边都压得住照片。
+   color-mix 在这里是安全的：它**没有引用自己**（坑过一次的是
+   `--card: color-mix(…, var(--card) …)` 那种自引用）。 */
+:root{--card-line:var(--line)}
+:root.bg-glass{--card-line:color-mix(in srgb, var(--txt) 20%, transparent)}
+:root.bg-glass .card,
+:root.bg-glass .kpi,
+:root.bg-glass .daypanel,
+:root.bg-glass .modal-card,
+:root.bg-glass .nside{
+  border-color:var(--card-line);
+  box-shadow:0 2px 14px rgba(0,0,0,.10)}
+
+/* ---- 文字光晕 ----
+   照片压在字底下时，靠一层跟主题相反的光晕把字"托"出来。
+   深色主题配黑光晕、浅色主题配白光晕 —— 反过来会让字发灰。
+   只挂在大字和标题上；正文段落挂光晕会糊成一团，反而更难读。 */
+/* ⚠ 原来那圈 8px 的白光晕，在浅色主题下会把深色标题糊出一圈毛边 ——
+   它本身就是「雾蒙蒙」的一部分。现在卡片不透明度有下限、又有描边兜着，
+   光晕只要在最贴边的一圈做点过渡就够了，所以只留 1px。 */
+:root{--txt-halo:0 1px 2px rgba(255,255,255,.5)}
+[data-theme="dark"]{--txt-halo:0 1px 2px rgba(0,0,0,.55)}
+:root.bg-glass .ph-title,
+:root.bg-glass .kpi .num,
+:root.bg-glass .card>h2.sec,
+:root.bg-glass .sec,
+:root.bg-glass .brand,
+:root.bg-glass .mtitle,
+:root.bg-glass .stocktable th{text-shadow:var(--txt-halo)}
+
+/* ---- 胶囊的透明度分级 ----
+   规矩（用户定的）：**状态标签和主操作保持实心彩色**，在照片上一眼能认出来；
+   只有次要按钮跟着卡片一起透，免得在玻璃上贴一排实心小贴纸。
+
+   ⚠ 这里**不能**去动 --bg：body 和 body::after（那层遮罩）、锁屏、开屏
+     全都靠它。把 --bg 改成半透明，整页底色和遮罩会一起塌掉。
+     所以另开一个 --chip-bg，默认就等于 --bg，只给「小控件」用。 */
+:root{--chip-bg:var(--bg)}
+/* 输入框那圈线，和它通透时那层极淡的底。
+   ⚠ 同样不能直接改 --line：表格边线、卡片描边全在用。 */
+/* ⚠ --input-bg 2.3.7 起默认是**卡片色**（原来是 transparent）。
+   透明底在实心卡片上等于"没有输入框"，用户看不出哪儿能填字；
+   而"卡片改实心"之后也没有"贴纸感"这个问题了 —— 贴纸感本来就是
+   半透明卡片才有的毛病。 */
+:root{--chip-line:var(--line);--input-bg:var(--card)}
+.btn.ghost{background:var(--chip-bg)}
+/* ghost 按钮本来一条边都没有（`.btn{border:0}`），底色一透就整个消失了。
+   所以通透时补一圈发丝线，靠轮廓站住，而不是靠那块色。 */
+:root.bg-glass .btn.ghost{box-shadow:inset 0 0 0 1px var(--line)}
+.top{position:sticky;top:0;z-index:50;display:flex;align-items:center;gap:22px;
+  background:var(--top-bg);color:var(--top-fg);padding:10px 20px;box-shadow:0 2px 10px rgba(30,58,138,.35)}
+/* ---- 桌面壳：顶栏接管标题栏 ----
+   Electron 里已经把 Windows 的原生标题栏去掉了，最小化/最大化/关闭
+   三个按钮浮在顶栏**右侧**（由 titleBarOverlay 画）。所以：
+     · 右边得留出约 150px，不然「设置」标签会被压在按钮底下
+     · 顶栏空白处要能拖窗口（-webkit-app-region:drag），否则窗口拖不动
+     · 但按钮和下拉框上必须 no-drag，不然点不动 */
+:root.shell .top{padding-right:152px;-webkit-app-region:drag}
+:root.shell .top button,
+:root.shell .top select,
+:root.shell .top a,
+:root.shell .top input{-webkit-app-region:no-drag}
+.brand{font-size:1.214rem;font-weight:700;letter-spacing:.5px}
+.top nav{display:flex;gap:6px}
+.tab{border:0;background:var(--top-tab);color:var(--top-fg);padding:8px 18px;
+  border-radius:20px;cursor:pointer;font-size:1rem;font-family:inherit}
+.tab:hover{background:var(--top-tab-h)}
+.tab.active{background:var(--card);color:var(--top-bg);font-weight:700}
+.sync{margin-left:auto;font-size:0.857rem;color:var(--top-mut)}
+.sem-pick{margin-left:auto;background:var(--top-tab);color:var(--top-on-bg);border:0;
+  border-radius:8px;padding:6px 10px;font-size:0.929rem;font-family:inherit;cursor:pointer}
+.sem-pick option{color:var(--txt);background:var(--card)}
+.sync{margin-left:12px}
+main{max-width:1200px;margin:0 auto;padding:18px 16px 50px}
+h2.sec{font-size:1.143rem;margin:26px 0 12px;padding-left:11px;border-left:4px solid var(--blue)}
+/* ⚠ 2.4.9 改了两处，都是用户截图里一眼能看出来的毛病：
+   ① **卡片高矮不齐** —— 每张卡的副标题行数不一样（有的没有、有的单行、
+      「本月支出」还可能是「预算 ¥x · 比上月 +24%」两行），于是同一排卡片
+      高度各异。修法：把卡做成 flex 列，副标题 `margin-top:auto` 顶到底 ——
+      高度由同一排里最高的那张决定，**副标题基线对齐**，看着就齐了。
+   ② **「今天已赚」孤零零掉到第二行** —— 原来是 minmax(165px,1fr)：
+      7 张卡一行要 7×165 + 6×12 = 1227px，而卡片区宽 1166px，差 61px 放不下。
+      降到 152px 后 7×152 + 72 = 1136 < 1166，一行正好排得下。
+      ⚠ 152 不是随手写的：它是「7 张卡能塞进 1166px」的上限附近，再小数字会折行。 */
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(152px,1fr));gap:12px;margin-bottom:16px}
+.kpi{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:12px 16px;
+  position:relative;overflow:hidden;box-shadow:0 1px 6px rgba(16,24,40,.05);
+  display:flex;flex-direction:column}
+.kpi:before{content:'';position:absolute;left:0;top:0;bottom:0;width:4px;background:var(--accent,var(--blue))}
+.kpi .lab{font-size:0.857rem;color:var(--mut);margin-bottom:6px}
+.kpi .num{font-size:1.643rem;font-weight:700}
+/* margin-top:auto 把副标题压到卡片底部 —— 同排卡片高度一致时，副标题自然对齐 */
+.kpi .sub{font-size:0.786rem;color:var(--mut);margin-top:auto;padding-top:4px}
+/* 图表高度。300px 配一屏半宽（~700px）的卡片会显得又宽又扁，
+   宽屏下再给高一点 —— 圆环和柱子都需要纵向空间才好看。 */
+.chart{width:100%;height:300px}
+@media(min-width:1100px){.chart{height:348px}}
+@media(min-width:1500px){.chart{height:376px}}
+.chart.small{height:240px}
+table{width:100%;border-collapse:collapse;font-size:0.929rem}
+th,td{border-bottom:1px solid var(--soft2);padding:6px 8px;text-align:left}
+th{color:var(--mut);font-weight:600;font-size:0.857rem;background:var(--soft);white-space:nowrap}
+tbody tr:hover{background:var(--soft)}
+tr.total td{font-weight:700;border-top:2px solid var(--line)}
+.voidrow{color:var(--mut);text-decoration:line-through}
+.g{color:var(--green)}.r{color:var(--red)}.b{color:var(--blue)}.a{color:var(--amber)}
+.num{text-align:right}
+.badge{display:inline-block;border-radius:20px;padding:2px 10px;font-size:0.786rem;font-weight:700;white-space:nowrap}
+.tagw{background:var(--amber-l);color:var(--amber-d)}.tagg{background:var(--green-l);color:var(--green-d)}
+.tagr{background:var(--red-l);color:var(--red-d)}.tagd{background:var(--chip-bg);color:var(--mut)}
+.tagv{background:var(--violet-l);color:var(--violet-d)}
+.dot{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:6px}
+input,select,button{font-family:inherit;font-size:0.929rem}
+/* ================================================================
+   表单控件（2.3.7 统一）
+   ----------------------------------------------------------------
+   ⚠ 这里原来只有 `input,select` —— **textarea 根本没被选中**。
+     全站每一个多行输入框（设置页的提示词、日记模板、应急信息…）
+     长得都是浏览器出厂样子：白底、1px 黑直框、直角。
+     用户的原话是「这个输入框是什么，丑的要死」。
+     一行改完的事，就是一直没人看一眼。
+
+   ⚠ 另一件事：focus 的蓝色发光去掉了。`box-shadow:0 0 0 2px rgba(37,99,235,.15)`
+     是 2021 年那套设计语言的残留，跟现在的纸墨调子完全不搭；
+     而且深色主题下蓝光晕配暖色配色，像是另一个程序的东西。
+     现在 focus 只做一件事：**把描边加深一档**。安静，但看得见。
+
+   尺寸抄的是系统设置页那一派（SpringNote 的规范也一样）：
+   高 36px、圆角 10px、边框 --line、focus 时边框到 --txt2。 */
+input,select,textarea{border:1px solid var(--line);border-radius:10px;padding:6px 10px;
+  background:var(--input-bg,var(--card));color:var(--txt);
+  font-family:inherit;font-size:0.929rem;line-height:1.5}
+textarea{resize:vertical;min-height:64px}
+input:hover,select:hover,textarea:hover{border-color:var(--txt2)}
+input:focus,select:focus,textarea:focus{
+  outline:none;border-color:var(--txt2);
+  box-shadow:0 0 0 3px color-mix(in srgb,var(--txt) 9%,transparent)}
+input:disabled,select:disabled,textarea:disabled{opacity:.5;cursor:not-allowed}
+::placeholder{color:var(--mut);opacity:.85}
+
+/* ---- 滑块 ----
+   ⚠ 全站四个滑块（字号 / 衬底 / 模糊 / 通透）以前**一个样式都没写**，
+     全靠 `color-scheme:light` 那个默认外观。深色主题下浏览器仍然按"浅色"
+     画：**一条纯白的轨道**，滑块在深色卡片上几乎看不见。
+     用户原话：「深色模式这个滑动条背景应该变为透明一些，滑动条变为白色」。
+
+   现在：轨道 = 主题文字色兑到 22%（深浅两态都是"比底色重一点点"的一条细线），
+   滑块 = --txt —— 浅色下是近黑，深色下是近白，**正好就是他说的那个效果**，
+   而且是同一条规则自动给的，不用为深浅各写一份。 */
+input[type=range]{-webkit-appearance:none;appearance:none;background:transparent;
+  border:0;padding:0;height:20px;cursor:pointer;box-shadow:none}
+input[type=range]:hover,input[type=range]:focus{border:0;box-shadow:none}
+input[type=range]::-webkit-slider-runnable-track{height:4px;border-radius:2px;
+  background:color-mix(in srgb,var(--txt) 22%,transparent)}
+input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:15px;height:15px;
+  margin-top:-5.5px;border-radius:50%;background:var(--txt);border:0;
+  box-shadow:0 1px 3px rgba(0,0,0,.28)}
+input[type=range]::-moz-range-track{height:4px;border-radius:2px;
+  background:color-mix(in srgb,var(--txt) 22%,transparent)}
+input[type=range]::-moz-range-thumb{width:15px;height:15px;border-radius:50%;
+  background:var(--txt);border:0;box-shadow:0 1px 3px rgba(0,0,0,.28)}
+input[type=range]:focus-visible::-webkit-slider-thumb{
+  box-shadow:0 0 0 4px color-mix(in srgb,var(--blue) 35%,transparent)}
+
+/* ---- 复选框 ----
+   同上一节：以前也是出厂外观 —— 浅色下是个白方块配灰勾，
+   压在照片或深色卡片上就是个"洞"。现在自己画，勾的颜色用 --on-solid，
+   深浅两套主题都自动对。 */
+input[type=checkbox]{-webkit-appearance:none;appearance:none;width:16px;height:16px;
+  padding:0;border:1.5px solid var(--line);border-radius:5px;background:var(--card);
+  display:inline-block;vertical-align:-3px;cursor:pointer;position:relative;flex:none}
+input[type=checkbox]:hover{border-color:var(--txt2)}
+input[type=checkbox]:checked{background:var(--blue);border-color:var(--blue)}
+input[type=checkbox]:checked::after{content:"";position:absolute;left:4px;top:1px;
+  width:4.5px;height:8px;border:solid var(--on-solid);border-width:0 2px 2px 0;
+  transform:rotate(42deg)}
+input[type=checkbox]:focus-visible{box-shadow:0 0 0 3px color-mix(in srgb,var(--blue) 35%,transparent)}
+
+/* 颜色选择器：默认外观是个凸起的灰按钮，跟整站完全不搭。压扁它。 */
+input[type=color]{-webkit-appearance:none;appearance:none;padding:2px;width:52px;height:32px;
+  cursor:pointer;overflow:hidden}
+input[type=color]::-webkit-color-swatch-wrapper{padding:0}
+input[type=color]::-webkit-color-swatch{border:0;border-radius:7px}
+.btn{border:0;border-radius:8px;padding:6px 16px;cursor:pointer;font-weight:600;
+  background:var(--blue);color:var(--on-solid)}
+.btn:hover{filter:brightness(1.08)}
+.btn.ghost{background:var(--bg);color:var(--txt2)}
+.btn.warn{background:var(--red-l);color:var(--red-d)}
+/* 「已经记下了」的按钮。以前只把 ghost 换成普通蓝底，在深色主题下
+   跟旁边那排灰按钮几乎看不出区别 —— 点完不知道到底记上没有。
+   现在实心绿 + 一圈光晕，扫一眼就知道。 */
+.btn.done{background:var(--green);color:#fff;box-shadow:0 0 0 3px var(--green-l)}
+.btn.sm{padding:3px 10px;font-size:0.857rem;border-radius:6px}
+/* ---- 线性勾勒按钮（2.4.2）----
+   用户的原话：「这个记一笔按钮也不好看，简约一些，线性勾勒」。
+
+   起因是随笔左栏那个「写一篇」：它是个 `class="btn"` 加 `width:100%` ——
+   一个**撑满侧栏的实心色块**，压在那一列笔记头上，视觉重量比内容本身
+   还大。实心填充是拿来标"这是本页唯一的主操作"的，而这个侧栏里
+   它只是个「新建」，不该有那个分量。
+
+   所以给它（以及回忆书的「新对话」）换成一圈线勾出来的样子：
+   透明底 + 一圈发丝线，字用主色。描边的浓淡从主色兑出来，
+   所以七套配色、深浅两态都自动跟着走，不用各写一份。
+
+   ⚠ 这不是把全站主按钮都改成线框 —— 「记一笔」「保存」那种**表单的主操作**
+     仍然是实心的。实心/描边是拿来分主次的，全描边就等于没主次了。 */
+.btn.line{background:transparent;color:var(--blue);
+  box-shadow:inset 0 0 0 1px color-mix(in srgb, var(--blue) 40%, transparent)}
+.btn.line:hover{background:color-mix(in srgb, var(--blue) 12%, transparent);
+  box-shadow:inset 0 0 0 1px color-mix(in srgb, var(--blue) 62%, transparent);
+  filter:none}
+/* 通透模式下别让它跟着变半透明 —— 它本来就没底，只靠那圈线站着 */
+:root.bg-glass .btn.line{background:transparent}
+:root.bg-glass .btn.line:hover{background:color-mix(in srgb, var(--blue) 12%, transparent)}
+/* 通透时主操作按钮的底色也带一点透明 —— 但只到 75%。
+   你要求「记一笔」保留半透明底色，可它同时得是整屏最显眼的东西，
+   全透就跟背景糊在一起了。用 color-mix 按比例调，
+   ⚠ 不能用 `--blue: color-mix(... var(--blue) ...)` 那种自引用写法（会整条失效）。 */
+:root.bg-glass .btn{background:color-mix(in srgb, var(--blue) 75%, transparent)}
+:root.bg-glass .btn.warn{background:color-mix(in srgb, var(--red-l) 78%, transparent)}
+:root.bg-glass .btn.done{background:color-mix(in srgb, var(--green) 84%, transparent)}
+:root.bg-glass .btn.ghost{background:var(--chip-bg)}
+.mini{font-size:0.857rem;color:var(--mut)}
+.form{display:flex;flex-wrap:wrap;gap:10px;align-items:flex-end}
+/* ⚠ `.f` 原来只写在 `.form .f` 里 —— 于是**不在 .form 里的 .f 就是个普通 div**，
+   标签、滑块、说明全挤在同一行上。
+   背景图那张卡就是这么写的（`<div class="f" style="margin-top:8px">` 直接放在
+   .card 里），实测截图里「衬底 20%」和它的说明文字隔了 390px，中间一片空白。
+   现在 .f 自己就是纵向布局，放哪儿都对；`.form .f` 那条保留（权重更高，行为不变）。 */
+.f{display:flex;flex-direction:column;gap:4px;min-width:0}
+.form .f label{font-size:0.857rem;color:var(--mut)}
+.form input,.form select{min-width:96px}
+.seg{display:inline-flex;border:1px solid var(--line);border-radius:8px;overflow:hidden}
+.seg button{border:0;background:var(--card);padding:6px 14px;cursor:pointer}
+.seg button.on{background:var(--blue);color:var(--on-solid)}
+/* 提示条。**背景色写死，不跟主题走** ——
+   原来用的是 `background:var(--txt);color:#fff`，而深色主题里 --txt 是**浅色**
+   （#e5e8ec），于是白字白底，一个字都看不清。
+   提示条是「不管什么主题都要一眼看见」的东西，就不该用会翻转的主题变量。 */
+.toast{position:fixed;top:66px;left:50%;transform:translateX(-50%);z-index:99;
+  background:#141a21;color:#fff;padding:10px 22px;border-radius:22px;
+  font-size:calc(var(--fs) * .95);
+  border:1px solid rgba(255,255,255,.16);
+  box-shadow:0 6px 22px rgba(0,0,0,.38);opacity:.98}
+.toast.err{background:#a41c1c;border-color:rgba(255,255,255,.22)}
+.modal{position:fixed;inset:0;background:rgba(15,23,42,.45);z-index:80;
+  display:flex;align-items:center;justify-content:center;padding:20px}
+.modal[hidden]{display:none}   /* 必须显式压过上面的 display:flex，否则弹窗常驻挡点击 */
+.modal-card{background:var(--card);border-radius:14px;padding:20px 22px;max-width:640px;width:100%;
+  max-height:86vh;overflow:auto}
+.modal-card h3{margin:0 0 14px;font-size:1.143rem}
+.modal-actions{display:flex;gap:10px;justify-content:flex-end;margin-top:16px}
+.grid-tab{display:inline-flex;gap:6px;flex-wrap:wrap;margin-bottom:12px}
+.pill{border:1px solid var(--line);background:var(--card);border-radius:16px;padding:5px 14px;cursor:pointer}
+.pill.on{background:var(--blue);border-color:var(--blue);color:var(--on-solid);font-weight:700}
+.tickbtn{min-width:34px;padding:3px 8px;border:1px solid var(--line);border-radius:7px;
+  background:var(--card);cursor:pointer;color:var(--mut);font-weight:700}
+.tickbtn.yes{background:var(--green-l);border-color:var(--green-l2);color:var(--green-d)}
+.tickbtn.no{background:var(--red-l);border-color:var(--red-l2);color:var(--red-d)}
+.checkgrid{overflow:auto;max-height:74vh;border:1px solid var(--line);border-radius:10px}
+.checkgrid table{border-collapse:separate;border-spacing:0}
+.checkgrid th,.checkgrid td{padding:4px 6px;text-align:center}
+.checkgrid th{position:sticky;top:0;z-index:2}
+.checkgrid th.sub{top:26px;z-index:1;font-weight:400}
+.checkgrid td:first-child,.checkgrid th:first-child{position:sticky;left:0;background:var(--soft);z-index:3;text-align:left;font-weight:600}
+.checkgrid input{width:74px;padding:4px 5px;text-align:center}
+.checkgrid input.wide{width:120px;text-align:left}
+.checkgrid select{max-width:92px;padding:4px}
+.editcell{min-width:46px;min-height:26px;display:inline-flex;align-items:center;justify-content:center;
+  border-radius:6px;cursor:pointer;border:1px dashed transparent}
+.editcell:hover{border-color:var(--blue-l2);background:var(--soft)}
+.warn{background:var(--amber-l);border:1px solid var(--amber-l2);color:var(--amber-d);border-radius:10px;
+  padding:10px 14px;margin-bottom:12px;font-size:0.929rem;font-weight:600}
+.ok{background:var(--green-l);border:1px solid var(--green-l2);color:var(--green-d);border-radius:10px;
+  padding:10px 14px;margin-bottom:12px;font-size:0.929rem}
+details{margin-top:6px}
+summary{cursor:pointer;color:var(--blue);font-weight:700;padding:6px 0;user-select:none;font-size:0.929rem}
+.foot{text-align:center;color:var(--mut);font-size:0.857rem;margin-top:20px;line-height:1.9}
+.group-cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-bottom:12px}
+.gcard{border-radius:12px;padding:10px 14px;background:var(--soft);border:1px solid var(--line)}
+.gcard .k{font-size:0.857rem;color:var(--mut);margin-bottom:5px}
+.gcard .v{font-size:1.286rem;font-weight:700}
+.rankbar{display:flex;align-items:center;gap:9px;padding:6px 0;border-bottom:1px solid var(--soft);font-size:0.929rem}
+.rankbar .nm{width:64px;font-weight:600;flex-shrink:0}
+.rankbar .bar{flex:1;height:9px;background:var(--chip-bg);border-radius:6px;overflow:hidden}
+.rankbar .fill{display:block;height:100%;border-radius:6px}
+.rankbar .val{width:84px;text-align:right;font-weight:700}
+.rankbar .pct{width:48px;text-align:right;color:var(--mut)}
+.muted{color:var(--mut)}
+.ai-text{font-size:0.964rem;line-height:1.75;color:var(--txt2);white-space:normal;
+  background:var(--soft);border-left:3px solid var(--violet);border-radius:0 8px 8px 0;
+  padding:10px 14px;margin-top:4px}
+
+/* ---- 总览 ---- */
+.hero{background:linear-gradient(135deg,var(--top-bg) 0%,var(--blue) 55%,var(--blue) 100%);color:#fff;
+  border-radius:18px;padding:22px 26px 18px;margin-bottom:16px;box-shadow:0 10px 26px rgba(37,99,235,.25)}
+.hero h1{font-size:1.571rem;margin:0 0 10px}
+.hero .hstats{display:flex;gap:32px;flex-wrap:wrap}
+.hero .hs .k{font-size:0.857rem;color:var(--top-mut);margin-bottom:4px}
+.hero .hs .v{font-size:1.214rem;font-weight:700}
+.goto{cursor:pointer;transition:box-shadow .15s}
+.goto:hover{box-shadow:0 6px 18px rgba(37,99,235,.18);border-color:var(--blue-l2)}
+.gline2{display:flex;justify-content:space-between;align-items:center;padding:6px 0;
+  border-bottom:1px dashed var(--line);font-size:0.964rem}
+.gline2:last-child{border-bottom:none}
+.al{padding:8px 12px;border-radius:10px;margin-bottom:8px;font-size:0.929rem;background:var(--card)}
+.al.r{color:var(--red-d);border:1px solid var(--red-l2);background:var(--red-l)}
+.al.a{color:var(--amber-d);border:1px solid var(--amber-l2);background:var(--amber-l)}
+.quick{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.quick2{display:flex;gap:8px;align-items:center;margin-left:auto;font-size:0.929rem}
+.tickbtn.big{min-width:96px;padding:12px 14px;font-size:1rem;border-radius:10px;line-height:1.5}
+
+/* ---- 打卡日历 + 单日卡片 ---- */
+.calhead,.calwrap{display:grid;grid-template-columns:repeat(7,1fr);gap:6px}
+.calhead span{text-align:center;font-size:0.857rem;color:var(--mut);padding:4px 0}
+.calday{min-height:56px;border:1px solid var(--line);border-radius:10px;background:var(--card);
+  cursor:pointer;display:flex;flex-direction:column;align-items:center;justify-content:center;
+  gap:2px;font-family:inherit}
+.calday b{font-size:1.071rem}
+.calday span{font-size:0.75rem;color:var(--mut)}
+.calday.good{background:var(--green-l);border-color:var(--green-l2)}
+.calday.mid{background:var(--amber-l);border-color:var(--amber-l2)}
+.calday.none{background:var(--soft)}
+.calday.empty{border:1px dashed var(--bg);background:transparent;cursor:default}
+.calday.on{outline:2px solid var(--blue);outline-offset:1px}
+.calday.today b{color:var(--blue)}
+.calday:hover{border-color:var(--blue-l2)}
+.daypanel{border:1px solid var(--line);border-radius:14px;background:var(--card);padding:14px 16px;
+  max-height:76vh;overflow:auto}
+.daynav{display:flex;align-items:center;gap:10px;margin-bottom:12px;flex-wrap:wrap}
+.daytitle{font-size:1.143rem;font-weight:700;flex:1;min-width:140px}
+.dsec{border-top:1px dashed var(--line);padding:12px 0}
+.dsec-h{font-weight:700;margin-bottom:10px;display:flex;align-items:baseline;gap:10px}
+.drow{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:5px 0;font-size:0.929rem}
+.drow label{color:var(--mut);font-size:0.893rem;min-width:60px}
+.drow.wrap{gap:8px}
+.pillrow{display:inline-flex;gap:6px;flex-wrap:wrap}
+.dreamblock{display:flex;gap:8px;align-items:center;padding:6px 0;flex-wrap:wrap}
+.dreamblock b{min-width:38px}
+.dreamblock select{max-width:110px}
+.dreamblock input{flex:1;min-width:120px}
+
+/* ---- 物资 ---- */
+tr.eaten{opacity:.45}
+tr.eaten td{text-decoration:line-through}
+/* 零食数量旁边那个「−1」（2.4.7）。
+   ⚠ 这个类名必须在这里有样式 —— 否则就是个按浏览器出厂长相的按钮。
+     这正是 H 类坑（类名写了样式没写），本项目的 `.nwrap` 就那样藏了两个版本。
+   做成紧凑的小方块：它只是数量旁边的一个顺手指针，不该抢视觉。 */
+.stocktable .eatone{
+  padding:1px 6px;margin-left:6px;font-size:0.857rem;line-height:1.5;
+  border-radius:8px;vertical-align:middle;
+}
+/* 糖果色：跟「吃掉1个」主按钮同一族（绿色），但更淡，不抢 */
+.stocktable .eatone{color:var(--green-d);border-color:var(--line)}
+.stocktable .eatone:hover{background:var(--soft2);border-color:var(--green-d)}
+.addform{margin-bottom:12px}
+.addform summary{color:var(--green);margin-bottom:8px}
+
+/* ================= 日记（日报/周报/月报） ================= */
+/* 随手记。它住在蓝色 hero 横幅里，所以**不能做成一个白框** ——
+   那会像贴上去的便利贴。改成无框、透明底、只留一条底线，
+   平时几乎看不见，聚焦时底线亮起来，跟横幅是一体的。 */
+.quicknote{display:flex;gap:10px;align-items:flex-end;margin:6px 0 12px}
+/* ⚠ 这里原来写的是 color:#fff + rgba(255,255,255,…) 的下划线。
+   那是给**早期深色渐变横幅**配的 —— 后来 .hero 改成了素卡（浅底深字，
+   见下面「总览横幅：渐变+投影 → 素卡」那条），这一块却没跟着改。
+   结果：**浅色主题下白字压白卡，随手记输入框整块看不见**，
+   连下划线都是白的（等于没有输入框）。
+   一直没人发现，是因为开发时用的深色主题 —— 白字压深卡看着挺正常。
+   改法：全部走主题变量，深浅两套自动跟着走。 */
+.quicknote textarea{flex:1;resize:vertical;min-height:38px;padding:4px 2px;
+  border:0;border-bottom:1px solid var(--line);border-radius:0;
+  background:transparent;color:var(--txt);font-family:inherit;
+  font-size:calc(var(--fs) * .97);line-height:1.6}
+.quicknote textarea::placeholder{color:var(--mut)}
+.quicknote textarea:focus{outline:none;border-bottom-color:var(--blue);
+  background:var(--soft)}
+.quicknote textarea:hover{border-bottom-color:var(--txt2)}
+.quicknote .btn{white-space:nowrap}
+
+.nbanner{display:flex;align-items:center;gap:12px;padding:10px 14px;border-radius:12px;
+  background:var(--blue-l);border:1px solid var(--blue-l2);margin-bottom:12px;font-size:0.964rem;color:#1e40af}
+.nbanner.run{background:var(--amber-l);border-color:var(--amber-l2);color:var(--amber-d)}
+.nbanner.ok{background:var(--green-l);border-color:var(--green-l2);color:var(--green-d)}
+.nbanner .btn{margin-left:auto}
+
+.nlayout{display:grid;grid-template-columns:250px 1fr;gap:14px;align-items:start}
+.nside{background:var(--card);border:1px solid var(--line);border-radius:14px;overflow:hidden}
+.nkinds{display:flex;border-bottom:1px solid var(--line)}
+.nkind{flex:1;border:0;background:transparent;padding:10px 4px;cursor:pointer;font-size:0.929rem;
+  font-family:inherit;color:var(--mut);border-bottom:2px solid transparent}
+.nkind.on{color:var(--blue,var(--blue));font-weight:700;border-bottom-color:var(--blue,var(--blue))}
+.nkind:hover{background:var(--soft)}
+.nlist{max-height:66vh;overflow:auto}
+.nitem{padding:8px 12px;border-bottom:1px solid var(--soft2);cursor:pointer}
+.nitem:hover{background:var(--soft)}
+.nitem.on{background:var(--blue-l);border-left:3px solid var(--blue,var(--blue));padding-left:9px}
+.nname{font-size:0.929rem;font-weight:600}
+.nprev{font-size:0.857rem;color:var(--mut);margin-top:2px;overflow:hidden;text-overflow:ellipsis;
+  white-space:nowrap}
+
+.ncard{padding:0;overflow:hidden}
+.nhead{display:flex;align-items:center;gap:8px;padding:10px 12px;border-bottom:1px solid var(--line);
+  flex-wrap:wrap}
+.nbody{display:grid;min-height:60vh}
+.nbody.split{grid-template-columns:1fr 1fr}
+.nbody.edit{grid-template-columns:1fr}
+.nbody.view{grid-template-columns:1fr}
+.nbody textarea{width:100%;min-height:60vh;border:0;padding:16px 18px;resize:none;
+  font-family:ui-monospace,Consolas,"Courier New",monospace;font-size:0.964rem;line-height:1.75;
+  /* ⚠ 背景必须跟着主题走。以前这儿写死 #fcfdff，而文字用 var(--txt)，
+     深色模式下就成了白底白字 —— 整个编辑区看着是空白的 */
+  background:var(--card);color:var(--txt)}
+.nbody textarea:focus{outline:0}
+.nbody.edit textarea,.nbody.view textarea{border-right:0}
+.nbody .nview{border-left:1px solid var(--line);padding:16px 20px;overflow:auto;max-height:72vh}
+.nbody.edit .nview,.nbody.view textarea{display:none}
+.nbody.view .nview{border-left:0}
+
+/* Markdown 预览 */
+.md{font-size:1rem;line-height:1.8;color:var(--txt);word-wrap:break-word}
+.md h1{font-size:1.357rem;margin:4px 0 12px;padding-bottom:6px;border-bottom:1px solid var(--line)}
+.md h2{font-size:1.143rem;margin:18px 0 8px}
+.md h3{font-size:1.036rem;margin:14px 0 6px}
+.md p{margin:8px 0}
+.md ul,.md ol{margin:8px 0;padding-left:22px}
+.md li{margin:3px 0}
+.md blockquote{margin:10px 0;padding:6px 14px;border-left:3px solid #cbd5e1;background:var(--soft);
+  color:var(--txt2);border-radius:0 8px 8px 0}
+.md code{background:var(--soft2);padding:1px 5px;border-radius:4px;font-size:0.893rem;
+  font-family:ui-monospace,Consolas,monospace}
+.md pre{background:#1e293b;color:var(--line);padding:12px 14px;border-radius:10px;overflow:auto;margin:10px 0}
+.md pre code{background:transparent;color:inherit;padding:0}
+.md hr{border:0;border-top:1px solid var(--line);margin:16px 0}
+.md table{border-collapse:collapse;margin:10px 0;font-size:0.929rem}
+.md th,.md td{border:1px solid var(--line);padding:5px 10px;text-align:left}
+.md th{background:var(--soft);font-weight:600}
+.md a{color:var(--blue);text-decoration:none}
+.md a:hover{text-decoration:underline}
+.md img{max-width:100%;border-radius:8px}
+.md s{color:var(--mut)}
+
+/* ================= 回忆书 ================= */
+.mwrap{display:flex;flex-direction:column;height:calc(100vh - 130px);min-height:420px}
+.mhead{display:flex;align-items:center;gap:10px;padding:10px 14px;background:var(--card);
+  border:1px solid var(--line);border-radius:14px 14px 0 0;border-bottom:0}
+.mlist{flex:1;overflow:auto;background:var(--soft);border-left:1px solid var(--line);
+  border-right:1px solid var(--line);padding:16px 18px}
+/* ⚠ 原来是 margin:8vh auto 0 —— 从顶上往下推 8vh 就完事，下面剩多少不管。
+   宽屏上那块列表区 420px 高，空状态只占 161px，**底下 45% 全是空的**，
+   看着像页面没加载完。改成 auto 上下平分，整块垂直居中。
+   max-width 也放宽：560px 对这段中文太窄，会在「基/于」这种词中间断行。 */
+.mempty{max-width:640px;margin:auto;padding:24px 0;text-align:center}
+.mtitle{font-size:1.571rem;font-weight:700;margin-bottom:8px}
+.mex{display:flex;flex-wrap:wrap;gap:8px;justify-content:center;margin-top:18px}
+.mexbtn{border:1px solid var(--line);background:var(--card);border-radius:20px;padding:6px 14px;
+  font-size:0.929rem;cursor:pointer;font-family:inherit;color:#334155}
+.mexbtn:hover{background:var(--blue-l);border-color:var(--blue-l2);color:var(--blue-d)}
+.mmsg{display:flex;margin:12px 0}
+.mmsg.me{justify-content:flex-end}
+.mbubble{max-width:78%;padding:10px 14px;border-radius:14px;background:var(--card);
+  border:1px solid var(--line);font-size:1rem;line-height:1.75;word-wrap:break-word}
+.mmsg.me .mbubble{background:var(--blue);color:var(--on-solid);border-color:var(--blue)}
+.mbubble.md>*:first-child{margin-top:0}
+.mbubble.md>*:last-child{margin-bottom:0}
+.mtrace{margin-top:10px;border-top:1px dashed #dbe3ec;padding-top:8px}
+.mtrace summary{cursor:pointer;font-size:0.857rem;color:var(--mut);outline:none}
+.mtline{display:flex;align-items:center;gap:8px;padding:3px 0;font-size:0.857rem;color:var(--txt2);
+  flex-wrap:wrap}
+.mtline code{background:var(--soft2);padding:1px 6px;border-radius:4px;font-size:0.821rem}
+.mtline b{color:var(--blue-d)}
+.mtline.bad b{color:var(--red-d)}
+.mtline .mini{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:340px}
+.minput{display:flex;gap:8px;padding:12px;background:var(--card);border:1px solid var(--line);
+  /* 写字的地方别铺满整个窗口 —— 一行 159 个字没法读也没法写。
+     上限 780px，超出的宽度左右留白。 */
+  justify-content:center;
+  border-radius:0 0 14px 14px;border-top:0}
+.minput textarea{flex:1;max-width:780px;resize:none;padding:8px 10px;border-radius:10px;border:1px solid var(--line);
+  font-family:inherit;font-size:0.964rem;line-height:1.5}
+.minput textarea:focus{outline:2px solid var(--blue-l2);outline-offset:1px;border-color:var(--blue-l2)}
+.minput .btn{white-space:nowrap;align-self:flex-end;margin-right:auto}
+.mdots::after{content:"…";animation:dots 1.2s steps(4,end) infinite}
+@keyframes dots{0%{content:"."}33%{content:".."}66%{content:"..."}100%{content:"."}}
+
+/* ---- 待办提取弹窗 ---- */
+.tpick{max-height:52vh;overflow:auto;margin-bottom:6px}
+.tprow{display:flex;align-items:center;gap:7px;padding:5px 0;border-bottom:1px solid var(--soft2)}
+.tprow input[type=checkbox]{flex:none;width:15px;height:15px}
+.tprow .tp-item{flex:1;min-width:130px}
+.tprow select{flex:none;width:74px}
+.tprow input[type=date]{flex:none;width:132px}
+
+.nsub{font-size:0.821rem;color:var(--mut);margin-top:1px;letter-spacing:.2px}
+
+/* ---- 记账筛选 ---- */
+.recfilter{margin-bottom:6px}
+.rf-row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.rf-row input{flex:1;min-width:180px;padding:6px 10px;border-radius:8px;border:1px solid var(--line);
+  font-family:inherit;font-size:0.929rem}
+.rf-row input:focus{outline:2px solid var(--blue-l2);outline-offset:1px}
+.rf-row select{padding:6px 10px;border-radius:8px;border:1px solid var(--line);
+  font-family:inherit;font-size:0.929rem;background:var(--card)}
+.rf-cats{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+.rf-cat{display:inline-flex;align-items:center;gap:5px;border:1px solid var(--line);background:var(--card);
+  border-radius:16px;padding:4px 10px;font-size:0.893rem;cursor:pointer;font-family:inherit;
+  color:var(--txt2);transition:background .12s,border-color .12s}
+.rf-cat:hover{background:var(--soft2)}
+.rf-cat.on{background:var(--blue-l);border-color:var(--blue-l2);color:var(--blue-d);font-weight:600}
+
+
+/* >>> 配色区（本段由 _生成配色.py 生成，别手改） >>> */
+/* 12 级色阶，每一级有明确职责（借 Radix Colors 的做法）：
+     1-2  页面底 / 卡片底      3-5  次级面板、悬停、选中
+     6-8  分隔线、输入框边     9-10 主色（按钮）/ 悬停
+     11-12 次要文字 / 正文
+   七套配色由 _生成配色.py 用同一个公式算出，换配色只是换种子色相 ——
+   所以「第 6 级比第 4 级深一档」在每套里都是同一档，不会七套七种松紧。 */
+:root{--bg:#f9fafc;--card:#ffffff;--soft:#f3f4f7;--soft2:#eceef1;--line:#dcdee1;
+  --txt:#2b2b2d;--txt2:#5a5b5d;--mut:#848689;--faint:#d0d2d5;
+  --blue:#9d4034;--blue-d:#88392e;--blue-l:#fedbd4;--blue-l2:#fa9f8f;
+  --on-solid:#ffffff;
+  --top-bg:#461e18;--top-fg:#feebe8;--top-mut:#e77564;
+  --top-on-bg:#feebe8;--top-on-fg:#461e18;
+}
+[data-palette="素纸"],[data-palette="米黄"]{
+  --bg:#f9fafc;--card:#ffffff;--soft:#f3f4f7;--soft2:#eceef1;--line:#dcdee1;
+  --txt:#2b2b2d;--txt2:#5a5b5d;--mut:#848689;
+  --blue:#9d4034;--blue-d:#88392e;--blue-l:#fedbd4;--blue-l2:#fa9f8f;
+  --on-solid:#ffffff;
+  --faint:#d0d2d5;
+  --top-bg:#461e18;--top-fg:#feebe8;--top-mut:#e77564;
+  --top-on-bg:#feebe8;--top-on-fg:#461e18;
+  --top-tab:rgba(255,255,255,.12);--top-tab-h:rgba(255,255,255,.22);
+}
+[data-theme="dark"][data-palette="素纸"],[data-theme="dark"][data-palette="米黄"]{
+  --bg:#121314;--card:#1f2123;--soft:#252628;--soft2:#2d2e31;--line:#414245;
+  --txt:#ecedee;--txt2:#b9babd;--mut:#909295;
+  --blue:#db7868;--blue-d:#e58d7f;--blue-l:#550703;--blue-l2:#8d2317;
+  --on-solid:#121314;
+  --faint:#545659;
+  --top-bg:#ffe0da;--top-fg:#400502;--top-mut:#aa3e30;
+  --top-on-bg:#400502;--top-on-fg:#ffe0da;
+  --top-tab:rgba(255,255,255,.06);--top-tab-h:rgba(255,255,255,.13);
+}
+[data-palette="青瓷"]{
+  --bg:#f6fbfb;--card:#ffffff;--soft:#eef7f6;--soft2:#e6f0f0;--line:#d5e1e0;
+  --txt:#282c2c;--txt2:#565c5c;--mut:#7f8888;
+  --blue:#2d6d6d;--blue-d:#295f5f;--blue-l:#b8f0f0;--blue-l2:#7fcac9;
+  --on-solid:#ffffff;
+  --faint:#c9d4d4;
+  --top-bg:#163030;--top-fg:#cefafa;--top-mut:#5faaaa;
+  --top-on-bg:#cefafa;--top-on-fg:#163030;
+  --top-tab:rgba(255,255,255,.12);--top-tab-h:rgba(255,255,255,.22);
+}
+[data-theme="dark"][data-palette="青瓷"]{
+  --bg:#101413;--card:#1c2323;--soft:#212727;--soft2:#283030;--line:#3b4444;
+  --txt:#e8eeee;--txt2:#b5bcbc;--mut:#8b9494;
+  --blue:#66a5a5;--blue-d:#7eb4b3;--blue-l:#013232;--blue-l2:#0e5b5b;
+  --on-solid:#101413;
+  --faint:#4f5858;
+  --top-bg:#d0efef;--top-fg:#002525;--top-mut:#257474;
+  --top-on-bg:#002525;--top-on-fg:#d0efef;
+  --top-tab:rgba(255,255,255,.06);--top-tab-h:rgba(255,255,255,.13);
+}
+[data-palette="墨色"]{
+  --bg:#f9fafc;--card:#ffffff;--soft:#f3f5f7;--soft2:#eceef1;--line:#dcdee1;
+  --txt:#2a2b2d;--txt2:#595b5d;--mut:#848689;
+  --blue:#586371;--blue-d:#4d5662;--blue-l:#dae5f3;--blue-l2:#aebcce;
+  --on-solid:#ffffff;
+  --faint:#cfd2d5;
+  --top-bg:#272c32;--top-fg:#e8f1fd;--top-mut:#8f9dae;
+  --top-on-bg:#e8f1fd;--top-on-fg:#272c32;
+  --top-tab:rgba(255,255,255,.12);--top-tab-h:rgba(255,255,255,.22);
+}
+[data-theme="dark"][data-palette="墨色"]{
+  --bg:#121314;--card:#1f2223;--soft:#252628;--soft2:#2d2e31;--line:#414245;
+  --txt:#ecedee;--txt2:#b9bbbd;--mut:#909295;
+  --blue:#8e99a9;--blue-d:#9fa9b7;--blue-l:#232c36;--blue-l2:#445060;
+  --on-solid:#121314;
+  --faint:#545659;
+  --top-bg:#e2e8f1;--top-fg:#192028;--top-mut:#5b6878;
+  --top-on-bg:#192028;--top-on-fg:#e2e8f1;
+  --top-tab:rgba(255,255,255,.06);--top-tab-h:rgba(255,255,255,.13);
+}
+[data-palette="樱粉"]{
+  --bg:#fdf9f9;--card:#ffffff;--soft:#f9f3f3;--soft2:#f3ecec;--line:#e3dcdc;
+  --txt:#2d2a2a;--txt2:#5e5a59;--mut:#8a8484;
+  --blue:#90436b;--blue-d:#7d3c5d;--blue-l:#fdd8e8;--blue-l2:#f897c6;
+  --on-solid:#ffffff;
+  --faint:#d7d0cf;
+  --top-bg:#401f2f;--top-fg:#feeaf2;--top-mut:#d678a7;
+  --top-on-bg:#feeaf2;--top-on-fg:#401f2f;
+  --top-tab:rgba(255,255,255,.12);--top-tab-h:rgba(255,255,255,.22);
+}
+[data-theme="dark"][data-palette="樱粉"]{
+  --bg:#141212;--card:#262121;--soft:#292525;--soft2:#322d2d;--line:#474141;
+  --txt:#f0ecec;--txt2:#beb9b9;--mut:#969090;
+  --blue:#cd7aa2;--blue-d:#d88eb1;--blue-l:#4c0e32;--blue-l2:#802a59;
+  --on-solid:#141212;
+  --faint:#5a5454;
+  --top-bg:#feddec;--top-fg:#390a24;--top-mut:#9b4371;
+  --top-on-bg:#390a24;--top-on-fg:#feddec;
+  --top-tab:rgba(255,255,255,.06);--top-tab-h:rgba(255,255,255,.13);
+}
+[data-palette="蓝粉"]{
+  --bg:#f7fafe;--card:#ffffff;--soft:#f1f5fa;--soft2:#e9eef4;--line:#d9dfe4;
+  --txt:#292c2e;--txt2:#585b5e;--mut:#82878b;
+  --blue:#7c4c87;--blue-d:#6b4374;--blue-l:#f6d8fd;--blue-l2:#dda1ea;
+  --on-solid:#ffffff;
+  --faint:#cdd2d8;
+  --top-bg:#37223b;--top-fg:#fbe9ff;--top-mut:#bc82c9;
+  --top-on-bg:#fbe9ff;--top-on-fg:#37223b;
+  --top-tab:rgba(255,255,255,.12);--top-tab-h:rgba(255,255,255,.22);
+}
+[data-theme="dark"][data-palette="蓝粉"]{
+  --bg:#111315;--card:#1e2225;--soft:#23262a;--soft2:#2b2f33;--line:#3e4348;
+  --txt:#eaedf0;--txt2:#b7bbbf;--mut:#8e9398;
+  --blue:#b583c1;--blue-d:#c296cc;--blue-l:#3e1846;--blue-l2:#6b3677;
+  --on-solid:#111315;
+  --faint:#52565b;
+  --top-bg:#f8ddfe;--top-fg:#2e1134;--top-mut:#844d91;
+  --top-on-bg:#2e1134;--top-on-fg:#f8ddfe;
+  --top-tab:rgba(255,255,255,.06);--top-tab-h:rgba(255,255,255,.13);
+}
+[data-palette="藕荷"]{
+  --bg:#fafafd;--card:#ffffff;--soft:#f4f4f9;--soft2:#ededf3;--line:#dedde4;
+  --txt:#2b2b2e;--txt2:#5b5a5e;--mut:#86858b;
+  --blue:#605b8a;--blue-d:#534f77;--blue-l:#e2e0fd;--blue-l2:#b7b2ee;
+  --on-solid:#ffffff;
+  --faint:#d1d1d7;
+  --top-bg:#2a283d;--top-fg:#efeeff;--top-mut:#9893cd;
+  --top-on-bg:#efeeff;--top-on-fg:#2a283d;
+  --top-tab:rgba(255,255,255,.12);--top-tab-h:rgba(255,255,255,.22);
+}
+[data-theme="dark"][data-palette="藕荷"]{
+  --bg:#131215;--card:#222225;--soft:#262529;--soft2:#2e2e32;--line:#424247;
+  --txt:#edecf0;--txt2:#bababe;--mut:#929197;
+  --blue:#9691c4;--blue-d:#a6a2cf;--blue-l:#2a2549;--blue-l2:#4d477b;
+  --on-solid:#131215;
+  --faint:#55555b;
+  --top-bg:#e6e5fe;--top-fg:#1e1b36;--top-mut:#645e94;
+  --top-on-bg:#1e1b36;--top-on-fg:#e6e5fe;
+  --top-tab:rgba(255,255,255,.06);--top-tab-h:rgba(255,255,255,.13);
+}
+[data-palette="奶茶"]{
+  --bg:#fdf9f6;--card:#ffffff;--soft:#f8f4ee;--soft2:#f2ede7;--line:#e3ddd6;
+  --txt:#2d2b28;--txt2:#5e5a56;--mut:#8a8580;
+  --blue:#865431;--blue-d:#744a2c;--blue-l:#fedcc7;--blue-l2:#eaab7f;
+  --on-solid:#ffffff;
+  --faint:#d6d0ca;
+  --top-bg:#3b2617;--top-fg:#feece1;--top-mut:#c98b61;
+  --top-on-bg:#feece1;--top-on-fg:#3b2617;
+  --top-tab:rgba(255,255,255,.12);--top-tab-h:rgba(255,255,255,.22);
+}
+[data-theme="dark"][data-palette="奶茶"]{
+  --bg:#141210;--card:#24211d;--soft:#292521;--soft2:#322e29;--line:#46413c;
+  --txt:#efece9;--txt2:#bebab6;--mut:#96918c;
+  --blue:#c18b66;--blue-d:#cc9d7d;--blue-l:#451f00;--blue-l2:#763f12;
+  --on-solid:#141210;
+  --faint:#5a554f;
+  --top-bg:#ffe1ce;--top-fg:#341601;--top-mut:#90572d;
+  --top-on-bg:#341601;--top-on-fg:#ffe1ce;
+  --top-tab:rgba(255,255,255,.06);--top-tab-h:rgba(255,255,255,.13);
+}
+
+/* ---- 语义色：七套共用 ---- */
+:root{
+  --green:#377045;--green-d:#31623d;--green-l:#bff4c8;--green-l2:#89ce97;
+  --amber:#845800;--amber-d:#724d09;--amber-l:#fedfb4;--amber-l2:#ebae52;
+  --red:#a13c35;--red-d:#8b3630;--red-l:#fedbd6;--red-l2:#fe9c90;
+  --violet:#6a558e;--violet-d:#5c4b7b;--violet-l:#e8defe;--violet-l2:#c5abf4;
+}
+[data-theme="dark"]{
+  --green:#6ea87a;--green-d:#84b78e;--green-l:#003513;--green-l2:#175f2e;
+  --amber:#c18d3f;--amber-d:#cd9f5f;--amber-l:#3c2601;--amber-l2:#6a470a;
+  --red:#e0746a;--red-d:#e98a80;--red-l:#570004;--red-l2:#911a1a;
+  --violet:#a18bc9;--violet-d:#b09dd4;--violet-l:#31204c;--violet-l2:#59407f;
+}
+/* <<< 配色区 <<< */
+/* ---------- 关掉动画 ---------- */
+.no-anim *{transition:none !important;animation:none !important}
+@media (prefers-reduced-motion:reduce){*{transition:none !important;animation:none !important}}
+
+/* ---- 锁屏 ---- */
+
+/* [hidden] 是浏览器默认样式，权重跟类选择器一样 —— 后面的 display:flex 会把它盖掉。
+   这个坑在这个项目里踩过两次了（第一次是 .modal），凡是自己设了 display 的
+   可隐藏元素，都要补一条这个。 */
+.lock[hidden],.modal[hidden],.toast[hidden]{display:none !important}
+
+.lock{position:fixed;inset:0;z-index:200;background:var(--bg);
+  display:flex;align-items:center;justify-content:center}
+.lockcard{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);
+  padding:34px 40px;text-align:center;min-width:280px;box-shadow:0 8px 40px rgba(0,0,0,.08)}
+.lockicon{font-size:2.429rem;margin-bottom:6px}
+.locktitle{font-size:1.357rem;font-weight:700;letter-spacing:2px;margin-bottom:2px}
+.lockcard input{width:100%;margin:14px 0 10px;padding:8px 12px;border-radius:9px;
+  border:1px solid var(--line);font-family:inherit;font-size:1rem;text-align:center;
+  background:var(--soft);color:var(--txt)}
+.lockcard input:focus{outline:2px solid var(--blue-l2);outline-offset:1px}
+.lockcard .btn{width:100%}
+
+/* ================= 设置页：左侧分区导航 ================= */
+.setwrap{display:grid;grid-template-columns:132px 1fr;gap:16px;align-items:start}
+.setnav{display:flex;flex-direction:column;gap:3px;position:sticky;top:64px;
+  background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:6px}
+.setnavbtn{border:0;background:transparent;text-align:left;padding:8px 10px;border-radius:9px;
+  cursor:pointer;font-family:inherit;font-size:0.964rem;color:var(--txt2);white-space:nowrap}
+.setnavbtn:hover{background:var(--soft)}
+.setnavbtn.on{background:var(--blue-l);color:var(--blue-d);font-weight:700}
+.setbody{min-width:0}
+.setsec>h2.sec:first-child{margin-top:0}
+
+/* 分段控件 */
+.seg{display:inline-flex;border:1px solid var(--line);border-radius:9px;overflow:hidden;
+  background:var(--soft)}
+.segbtn{border:0;background:transparent;padding:6px 12px;cursor:pointer;font-family:inherit;
+  font-size:0.929rem;color:var(--txt2);display:inline-flex;align-items:center;gap:5px}
+.segbtn+.segbtn{border-left:1px solid var(--line)}
+.segbtn:hover{background:var(--soft2)}
+.segbtn.on{background:var(--blue);color:var(--on-solid);font-weight:600}
+.segsm .segbtn{padding:3px 10px;font-size:0.893rem}
+.pal-dot{width:11px;height:11px;border-radius:50%;border:1px solid var(--line);display:inline-block}
+
+/* 关于页 */
+.abouthead{text-align:center;padding:14px 0 6px}
+.aboutname{font-size:1.857rem;font-weight:700;letter-spacing:6px;color:var(--txt)}
+.aboutver{font-size:0.857rem;color:var(--mut);margin-top:4px}
+.aboutslogan{font-size:1rem;color:var(--blue-d);letter-spacing:2px;margin-top:10px}
+.aboutpoem{font-size:0.893rem;color:var(--mut);line-height:2;margin-top:8px;letter-spacing:1px}
+
+.kvtable{width:100%;border-collapse:collapse}
+.kvtable td{border-bottom:1px solid var(--line);padding:5px 8px;vertical-align:top}
+.kvtable td:first-child{color:var(--mut);white-space:nowrap;width:110px}
+.errlog{background:var(--soft);border:1px solid var(--line);border-radius:9px;padding:10px 12px;
+  font-size:0.857rem;max-height:280px;overflow:auto;white-space:pre-wrap;word-break:break-all;
+  color:var(--txt2);margin:0}
+
+/* 打卡项编辑（个性化） */
+/* 打卡项编辑器。一行里要塞下：名字 / 类型 / 选项 / 上下移 / 显隐 / 删，
+   所以格子放宽一点，窄了就换行（auto-fill 自己会处理）。 */
+.itemsedit{display:grid;grid-template-columns:repeat(auto-fill,minmax(330px,1fr));gap:6px}
+.itemrow select{border:1px solid var(--line);border-radius:7px;background:var(--card);
+  color:var(--txt);padding:3px 6px;font-size:0.857rem;max-width:78px}
+.itemrow .segbtn[disabled]{opacity:.35;cursor:default}
+.itemrow .btn.warn.sm{padding:3px 8px;border-radius:7px}
+.itemrow{display:flex;align-items:center;gap:6px;background:var(--soft);
+  border:1px solid var(--line);border-radius:9px;padding:4px 6px}
+.itemrow input{flex:1;min-width:0;border:1px solid transparent;background:transparent;
+  font-family:inherit;font-size:0.929rem;color:var(--txt);padding:3px 5px;border-radius:6px}
+.itemrow input:hover{border-color:var(--line)}
+.itemrow input:focus{outline:none;border-color:var(--blue);background:var(--card)}
+.itemrow .segbtn{border-radius:7px;border:1px solid var(--line);padding:3px 8px;font-size:0.857rem}
+
+/* 开屏。纯 CSS 自己淡出，不靠 JS —— 后端慢或脚本出错时也不能糊住界面。
+   1.6 秒走完，然后 visibility:hidden（不是 display:none，是为了让动画能重播一次） */
+.splash{position:fixed;inset:0;z-index:200;display:flex;align-items:center;justify-content:center;
+  background:var(--bg);cursor:pointer;
+  animation:splashOut .5s ease 1.5s forwards}
+.splash-in{text-align:center;animation:splashIn .7s ease both}
+.splash-logo{width:74px;height:74px;margin:0 auto 16px;border-radius:20px;
+  background:var(--blue);color:var(--on-solid);font-size:2.714rem;line-height:74px;font-weight:700;
+  box-shadow:0 10px 28px rgba(0,0,0,.16)}
+.splash-name{font-size:1.643rem;font-weight:700;letter-spacing:9px;color:var(--txt);
+  text-indent:9px}
+.splash-slogan{font-size:1rem;color:var(--blue-d);letter-spacing:4px;margin-top:12px;text-indent:4px}
+.splash-poem{font-size:0.893rem;color:var(--mut);line-height:2.1;margin-top:16px;letter-spacing:1.5px}
+@keyframes splashIn{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
+@keyframes splashOut{to{opacity:0;visibility:hidden}}
+.no-anim .splash,.no-anim .splash-in{animation-duration:.01s}
+.aboutslogan2{font-size:0.857rem;color:var(--mut);letter-spacing:5px;margin-top:6px;text-indent:5px}
+
+/* 「数据在别处被改过」提示条。压在顶栏下面，不遮内容 */
+.stale{position:sticky;top:0;z-index:90;display:flex;align-items:center;gap:10px;
+  flex-wrap:wrap;padding:8px 16px;background:var(--warn-bg,#fff7e6);
+  border-bottom:1px solid var(--warn-line,#f0d9a8);color:var(--txt);
+  font-size:0.929rem;animation:staleIn .25s ease}
+.stale[hidden]{display:none}
+.stale span{flex:1;min-width:180px}
+@keyframes staleIn{from{opacity:0;transform:translateY(-6px)}to{opacity:1;transform:none}}
+
+/* ---- 打卡页：左栏（日历 + 两张图） / 右栏（单日面板）----
+   以前两张图在页面底部，日历下面空出几百像素，看着像没加载出来 */
+.checkwrap{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:16px;align-items:start}
+.checkleft{display:flex;flex-direction:column;gap:16px;min-width:0}
+.checkwrap>#ck-day{min-width:0}
+@media(max-width:900px){.checkwrap{grid-template-columns:1fr}}
+
+/* ---- 统一页面骨架：每页顶上一条摘要（标题 + 说明 + 动作）---- */
+.pagehead{display:flex;align-items:baseline;gap:12px;flex-wrap:wrap;margin:0 0 12px}
+.pagehead .ph-title{font-size:1.214rem;font-weight:700;color:var(--txt);letter-spacing:.5px}
+.pagehead .ph-sub{font-size:0.857rem;color:var(--mut)}
+.pagehead .ph-actions{margin-left:auto;display:flex;gap:8px;align-items:center}
+
+/* 折叠起来的大块（AI 分析）。默认收起，省得占着首屏 */
+details.aifold{border:1px solid var(--line);border-radius:14px;background:var(--card);
+  padding:10px 16px;margin-top:8px}
+details.aifold>summary{cursor:pointer;font-weight:700;font-size:1rem;color:var(--txt);
+  list-style:none;padding:4px 0}
+details.aifold>summary::-webkit-details-marker{display:none}
+details.aifold>summary:before{content:"▸ ";color:var(--mut)}
+details.aifold[open]>summary:before{content:"▾ "}
+details.aifold[open]>summary{margin-bottom:10px}
+
+/* 卡片可点跳转时的提示 */
+.kpi.goto{cursor:pointer;transition:transform .12s ease,box-shadow .12s ease}
+.kpi.goto:hover{transform:translateY(-1px);box-shadow:0 4px 14px rgba(16,24,40,.10)}
+.kpi.goto:hover .lab:after{content:" →";color:var(--blue)}
+
+/* 表单里的一行（比如「金额 + 收入/支出」）。
+   以前这两样在字段里各占一行，导致这个字段比其他字段高一截，
+   底部对齐之后它的输入框就比旁边的高出一行 —— 看着像排错了 */
+.form .frow{display:flex;gap:8px;align-items:center}
+.form .frow input{flex:1}
+
+/* 「标签 + 控件 + 单位」绑成一组，换行时不会把标签和控件拆到两行。
+   以前 .drow 是 flex-wrap，标签经常孤零零留在行尾，控件跑到下一行 */
+.drow .fgroup{display:inline-flex;align-items:center;gap:6px;white-space:nowrap}
+.drow .fgroup>label{min-width:0}
+.drow .unit{color:var(--mut);font-size:0.857rem}
+
+/* 明细条数 + 每页条数那一行 */
+.reclimit{display:flex;align-items:center;gap:12px;flex-wrap:wrap;justify-content:space-between}
+.reclimit>span:last-child{display:inline-flex;align-items:center;gap:4px}
+.reclimit .segbtn{border:1px solid var(--line);border-radius:7px;padding:2px 8px;font-size:0.857rem;
+  background:var(--card);cursor:pointer;color:var(--txt2);font-family:inherit}
+.reclimit .segbtn.on{background:var(--blue);color:var(--on-solid);border-color:var(--blue);font-weight:600}
+
+/* 单日面板的可折叠段。用 <details> 而不是自己写显隐，
+   键盘可达、语义正确、也不用记「现在是开还是关」 */
+details.dsec>summary{cursor:pointer;list-style:none;user-select:none}
+details.dsec>summary::-webkit-details-marker{display:none}
+details.dsec>summary:before{content:"▾";color:var(--mut);font-size:0.786rem;margin-right:6px}
+details.dsec:not([open])>summary:before{content:"▸"}
+details.dsec:not([open]){padding-bottom:6px}
+details.dsec:not([open])>summary{margin-bottom:0}
+.dsec-b{padding-top:2px}
+
+/* ---- 物资表：宽表收窄 + 操作按钮不抢戏 ---- */
+.stocktable td.narrow,.stocktable th.narrow{width:1%;white-space:nowrap;padding-left:6px;padding-right:6px}
+.stocktable th.opcol,.stocktable td.opcol{width:1%;white-space:nowrap;text-align:right}
+/* 操作按钮默认几乎透明，鼠标移到那一行才显出来 —— 27 行就是 27 个按钮，全亮着太闹 */
+/* ⚠ 原来是不透明度 .3 —— 本意是「27 行就是 27 个按钮，全亮着太闹」，
+   但 .3 在深色卡片上叠着照片时基本等于不存在，用户的原话是
+   「这些框也是看不清」「AI / 开封后多久 这些字看不清」。
+   抬到 .5：默认仍然是静的（肉眼扫过去不会跟正文抢），但要读的时候读得出来。 */
+.stocktable .opbtn{opacity:.5;transition:opacity .12s ease}
+.stocktable tr:hover .opbtn,.stocktable .opbtn:focus{opacity:1}
+/* 触屏没有 hover，永远完整显示 */
+@media(hover:none){.stocktable .opbtn{opacity:1}}
+/* 日期别折成两行（「2028-11-01」会在连字符处断开）。
+   **只给日期列加** —— 给所有格子加 nowrap 会把「备注」顶成一行，表格被撑爆 */
+.stocktable td.nowrap,.stocktable td.nowrap .editcell{white-space:nowrap}
+
+/* ---- 空状态统一 ---- */
+.empty{padding:26px 12px;text-align:center;color:var(--mut)}
+.empty .e-main{font-size:0.964rem}
+.empty .e-hint{font-size:0.857rem;margin-top:6px;opacity:.85}
+
+/* ---- 设置页 ---- */
+.settop{display:flex;align-items:baseline;gap:12px;margin:0 0 14px}
+.settop .ph-title{font-size:1.214rem;font-weight:700;color:var(--txt);letter-spacing:.5px}
+.settop .ph-sub{font-size:0.857rem;color:var(--mut)}
+/* 深色下左导航原来跟页面一个色，几乎看不出边界 */
+[data-theme="dark"] .setnav{background:var(--soft)}
+[data-theme="dark"] .setnavbtn{color:var(--txt2)}
+[data-theme="dark"] .setnavbtn.on{background:var(--blue-l);color:var(--blue-d)}
+
+/* AI 折叠区底部的按钮条 */
+.aifold-foot{display:flex;justify-content:flex-end;margin-top:10px}
+
+/* ================================================================
+   简约风（2.0）
+   ----------------------------------------------------------------
+   原则：**靠留白和层次分明的字重，而不是靠阴影、渐变、配色块**。
+   · 去掉卡片投影，改用一根发丝线分隔
+   · 顶部那条金色渐变横幅压成一张素卡（渐变是最"不简约"的东西）
+   · 导航改成扁平的，不再是一排药丸
+   · 圆角统一收小（14 → 10），大圆角显得软而杂
+   ================================================================ */
+:root{
+  --radius:10px;
+  --hair:1px solid var(--line);
+}
+
+/* ---- 宽表格不许溢出卡片（2.4.4）----
+ * 用户的原话：「这里的三个表，每行怎么都超出卡片了啊」。
+ *
+ * 根因：**表格不会自己缩到比内容还窄**。物资的药品表有 18 列，加上
+ * 「操作」那一列里两个按钮，它的最小宽度就是比卡片宽 ——
+ * 表格不认输，直接从卡片右边溢出去，压在背景照片上。
+ *
+ * 全站有 19 张表渲染在 .card 里，所以这里**加在卡片上，不是加在某张表上**。
+ *
+ * ⚠ 为什么敢给 .card 加 overflow-x:auto：
+ *   CSS 规定 overflow 的两个轴不能一个 visible 一个 auto —— 写了 x:auto，
+ *   y 会被算成 auto。所以真正要确认的是「**卡片会不会冒出纵向滚动条**」。
+ *   答案是不会：`.card` 的高度是**自动撑开**的（没写 height/max-height），
+ *   内容多高它多高，永远不存在"纵向装不下"。纵向没有溢出，就没有滚动条。
+ *   （如果哪天给某张卡加了固定高度，这条就不成立了 —— 到时候要回头改。）
+ *
+ * 顺带一个好处：卡片本来就有 14px 圆角，overflow 会让表格的角跟着圆，
+ * 不会再从圆角那儿露出一小块方角。 */
+.kpi:before{width:3px}                 /* 左边那道色条细一点 */
+
+/* 顶部：从深蓝实心条改成跟页面同色系的扁平条 */
+.top{background:var(--card);color:var(--txt);box-shadow:none;
+  border-bottom:var(--hair);gap:16px;padding:9px 20px}
+.brand{font-size:1.143rem;letter-spacing:.3px;color:var(--txt);font-weight:700}
+.brand .blogo{width:20px;height:20px;vertical-align:-4px;margin-right:6px;
+  color:var(--blue);stroke-width:1.9}
+.tab{background:transparent;color:var(--txt2);padding:6px 12px;border-radius:8px;font-size:0.964rem}
+.tab:hover{background:var(--soft);color:var(--txt)}
+.tab.active{background:var(--blue-l);color:var(--blue-d);font-weight:600}
+.sem-pick{background:var(--soft);color:var(--txt2);border:var(--hair)}
+/* ⚠ 2.4.5：顶栏那行「已连接 19:58」提深一档。
+   它原来用的是**最淡的那档灰**（--mut），12px 小字压在卡片底上只有约
+   3.6:1，低于正文 4.5:1 的标准。用户看截图时圈的就是它。
+   提到 --txt2 就够了 —— 它仍然比标签页轻，但要读的时候读得出来。 */
+.sync{color:var(--txt2)}
+
+/* 总览横幅：渐变+投影 → 素卡 */
+.hero{background:var(--card);color:var(--txt);border:var(--hair);
+  border-radius:var(--radius);padding:18px 20px 14px;box-shadow:none}
+.hero h1{font-size:1.357rem;font-weight:700;margin:0 0 12px}
+.hero .hs .k{color:var(--mut)}
+.hero .hs .v{font-size:1.286rem;font-weight:650}
+.hero .hs .v,.hero h1{color:var(--txt)}
+
+/* 悬停：不要"浮起来"，只把描边加深一点点 */
+.goto{transition:border-color .15s,background .15s}
+.goto:hover{box-shadow:none;border-color:var(--blue-l2);background:var(--soft)}
+.kpi.goto:hover{transform:none;box-shadow:none;background:var(--soft)}
+
+/* 区块标题：去掉左边的竖条，改用字号和间距拉层次 */
+h2.sec{border-left:0;padding-left:0;font-size:1.071rem;font-weight:700;
+  margin:24px 0 10px;letter-spacing:.2px}
+h2.sec .mini{font-weight:400}
+.setsec>h2.sec:first-child,.pagehead+h2.sec{margin-top:0}
+
+/* ---- 桌面外壳：无边框窗口的窗控按钮 ---- */
+.winbtns{display:none;margin-left:10px;gap:2px}
+.in-shell .winbtns{display:flex}
+/* 顶栏在无边框模式下要能拖着走，所以不许选中文字 */
+.in-shell .top{user-select:none}
+.winbtn{width:34px;height:26px;border:0;background:transparent;color:var(--mut);
+  border-radius:6px;cursor:pointer;display:flex;align-items:center;justify-content:center;
+  padding:0;font-family:inherit}
+.winbtn:hover{background:var(--soft2);color:var(--txt)}
+.winbtn.close:hover{background:var(--red);color:var(--on-solid)}
+.winbtn .ic{width:15px;height:15px}
+/* 最大化时不能有圆角，否则四角会露出桌面 */
+.in-shell.maxed body{border-radius:0}
+.ic{width:1.05em;height:1.05em;vertical-align:-.16em}
+
+/* 顶栏/导航里那个图标位 */
+.bi{display:inline-flex;align-items:center;vertical-align:-.18em;margin-right:6px}
+.bi .ic{width:1.05em;height:1.05em}
+.brand .bi .ic{width:1.15em;height:1.15em;color:var(--blue)}
+
+/* 字体预览：就地看效果，不用先选中再满界面找差别 */
+.fontprev{margin-top:8px;padding:10px 12px;border:1px dashed var(--line);border-radius:8px;
+  font-size:1.143rem;color:var(--txt2);line-height:1.8;background:var(--soft)}
+/* 背景图预览：直接把那张图当缩略图，所见即所得 */
+.bgprev{width:220px;height:124px;border:1px dashed var(--line);border-radius:8px;
+  background:var(--soft);display:flex;align-items:center;justify-content:center;
+  overflow:hidden;flex:0 0 auto}
+.bgprev.has{border-style:solid;background-image:url("/bg");background-size:cover;
+  background-position:center}
+
+/* ---- 日记编辑区（默认模式）----
+   写字的地方，第一要务是读着不累：行宽别太长、行距给足、字号比界面正文大一点 */
+.nbody textarea{max-width:none;font-size:1.036rem;line-height:1.95;
+  font-family:ui-monospace,Consolas,"Courier New",monospace;padding:20px 24px}
+.nbody .nview{padding:20px 24px;font-size:1.036rem;line-height:1.95;max-width:60em}
+/* 对照模式：窗口不够宽就上下摞起来，别硬挤成两条缝 */
+@media(max-width:1000px){
+  .nbody.split{grid-template-columns:1fr}
+  .nbody.split .nview{border-left:0;border-top:1px solid var(--line)}
+}
+.nmode{margin-right:4px}
+
+/* ================= 古籍竖排（2.4.7）=================
+   读的那一侧竖排（从右往左、从上往下），**编辑那一侧照旧横排** ——
+   在竖排输入框里写字是自虐，用户只要求「阅读像古籍」。
+
+   ⚠ 为什么只给 #n-view 加一个类、不去改 `.md`：
+     `.md` 是**回忆书气泡**（`.mbubble.md`）也在用的公共渲染样式。
+     动它会连带把 AI 对话改成竖排。所以竖排单独一类，只挂日记预览。
+
+   ⚠ 竖排里表格/代码/图必须**强制横排**：
+     表格行一旦竖排会变成一摞竖条，根本没法读。
+     所以在竖排容器内部把它们改回 horizontal-tb（像古籍里夹的表格页）。 */
+.nview-v{
+  writing-mode:vertical-rl;
+  /* `text-orientation:upright` —— **所有文字符号都竖排**（用户 2026-09-21 定的）。
+     演进过程（记着，免得又有人"顺手改回 mixed"）：
+       · 最早用 `mixed`（中文竖排的标准做法）：汉字正立，数字/字母转 90° 横躺
+         → 用户：「数字还没有竖版」
+       · 2.4.8 改成 `upright`，但**只让数字正立**，成串字母仍套 `.latin` 转回 90°
+         → 用户：「英文没有竖版，所有文字符号都要竖排」
+       · 2.4.9 把 `.latin` 那一层**整个删掉**：现在**一切**都竖着排
+         （`Python` 就是一列竖着的字母，`DeepSeek` 也一样）
+     ⚠ 这是用户要的效果，不要再"优化"成按词横躺 —— 那正是被推翻的做法。 */
+  text-orientation:upright;
+  /* 字体（2.4.8）：**瘦金体**，用户明确要的。
+  /* 字体：**由 --diary-font 决定**（core.js 的 applyDiaryFont 按用户设置写入）。
+     设置项是 `diary_font`：shoujin=瘦金体 / mashan=马善政行书 / ""=用系统书法体。
+     ⚠ 为什么走 CSS 变量而不是在这里写死字体名：
+       用户要自己换字体。写死的话每次换都要改 CSS、重新构建。
+     ⚠ 回退链保留着：万一字体没加载上（文件缺了/下载失败），
+       退到华文行楷（书法气韵最接近），而不是退成默认宋体、整篇变味。
+     ⚠ 前面**不写具体字体名** —— 那是 applyDiaryFont 的活儿。 */
+  font-family:var(--diary-font,STXingkai),"Noto Serif SC",STKaiti,KaiTi,STSong,SimSun,serif;
+  font-size:1.069rem;
+  line-height:2.05;            /* 竖排里 line-height 是**列间距**，要比横排更宽 */
+  letter-spacing:.05em;        /* 字距：古籍排得疏，读着才不挤 */
+  position:relative;           /* 纹理层和角标都靠它定位 */
+  background:var(--soft2);
+  /* 双边框：外粗内细，是古籍版框的味道。颜色走主题变量。 */
+  border:1px solid var(--line);
+  box-shadow:
+    inset 0 0 0 1px var(--card),
+    inset 0 0 0 5px transparent,
+    inset 0 0 0 6px var(--line),          /* 内层细框（距外框 5px） */
+    inset 0 0 46px rgba(120,95,60,.07);
+  padding:26px 30px;
+  min-height:62vh;
+  max-height:76vh;
+  overflow:auto;               /* 竖排是横向变长，所以这里滚的是左右 */
+}
+/* ---- 纹理层（2.4.7）----
+   ⚠⚠ 单独一层，并且**显式 writing-mode:horizontal-tb**。
+     为什么必须独立：`writing-mode` 会把里面的**背景渐变一起旋转** ——
+     竖排容器里画一条"横线"，实际会画成竖线。
+     （原来那条纸格是直接写在容器 background 上的，当时"看着对"是因为
+       旋转和 0deg 的方向正好抵消了 —— 巧合，不是设计。加装饰前先把它挪出来。）
+   纹理共两层：织质斜纹 + 界格竖线。都在背景层，不抢文字的对比度。 */
+.nview-v::before{
+  content:"";position:absolute;inset:0;pointer-events:none;
+  writing-mode:horizontal-tb;   /* ★ 关键：这个伪元素自己不受竖排影响 */
+  background-image:
+    /* 界格：每 2.1em 一条极淡的竖线，模拟古籍的界行 */
+    repeating-linear-gradient(90deg,
+      transparent 0 calc(2.1em - 1px), var(--line) calc(2.1em - 1px) 2.1em),
+    /* 织质：横竖两组极淡细纹交错，近看是布纹，远看只当纸有质感 */
+    repeating-linear-gradient(0deg, rgba(120,95,60,.045) 0 1px, transparent 1px 4px),
+    repeating-linear-gradient(90deg, rgba(120,95,60,.045) 0 1px, transparent 1px 4px);
+  opacity:.55;
+  border-radius:inherit;
+}
+/* 朱印角标：右上角一枚朱红小方。纯 CSS，不引图片。
+   ⚠ 里面**不放文字** —— 伪元素里的字没法选中、读屏和搜索也拿不到，
+     放"小煦拾简"这种字样会变成谁都读不到的内容。 */
+.nview-v::after{
+  content:"";position:absolute;top:12px;right:12px;width:30px;height:30px;
+  writing-mode:horizontal-tb;
+  border:1.5px solid var(--red,#b91c1c);border-radius:4px;
+  box-shadow:inset 0 0 0 2px var(--soft2), inset 0 0 0 3px var(--red,#b91c1c);
+  opacity:.42;pointer-events:none;
+}
+/* 文字要压在纹理层之上 */
+.nview-v > *{position:relative;z-index:1}
+/* ⚠ 界格线必须**让开横排块**（表格 / 代码 / 图）。
+   这几样在竖排容器里被强制回横排了，界格的竖线横穿过去会显得脏，
+   而且盖住表格边框。有它们在场时只留织质、去掉界格。
+   用 :has() —— 现代 Chromium 支持（Electron 里也是同一套引擎）。 */
+.nview-v:has(table)::before,
+.nview-v:has(pre)::before,
+.nview-v:has(img)::before{
+  background-image:
+    repeating-linear-gradient(0deg, rgba(120,95,60,.045) 0 1px, transparent 1px 4px),
+    repeating-linear-gradient(90deg, rgba(120,95,60,.045) 0 1px, transparent 1px 4px);
+}
+:root[data-theme="dark"] .nview-v:has(table)::before,
+:root[data-theme="dark"] .nview-v:has(pre)::before,
+:root[data-theme="dark"] .nview-v:has(img)::before{
+  background-image:
+    repeating-linear-gradient(0deg, rgba(200,210,225,.05) 0 1px, transparent 1px 4px),
+    repeating-linear-gradient(90deg, rgba(200,210,225,.05) 0 1px, transparent 1px 4px);
+}
+/* 竖排容器里，p / h / li 的横排 margin 要换成"块轴"间距 ——
+   竖排下 margin-left/right 才是沿阅读方向的距离，上下是列内间距 */
+.nview-v p{margin:0 .55em}
+.nview-v h1,.nview-v h2,.nview-v h3{margin:0 .9em;border-bottom:0;padding-bottom:0}
+.nview-v h1{border-right:2px solid var(--line);padding-right:.5em}
+.nview-v ul,.nview-v ol{margin:0 .5em;padding-left:0;padding-right:1.4em}
+.nview-v li{margin:0 .25em}
+.nview-v blockquote{margin:0 .7em;padding:.5em 0;border-left:0;
+  border-right:3px solid var(--line);background:transparent}
+/* ★ 这几样在竖排里**强制回横排**：表格、代码、图、分隔线。
+   表格竖排 = 一摞竖条，没法读；代码横排才看得懂；图片转了会很怪。 */
+.nview-v table,.nview-v pre,.nview-v img,.nview-v hr,.nview-v code{
+  writing-mode:horizontal-tb;text-orientation:mixed;
+}
+.nview-v table{margin:.8em 0;max-width:min(88vw,760px)}
+.nview-v pre{margin:.8em 0;max-width:min(88vw,760px);white-space:pre-wrap}
+.nview-v img{margin:.8em 0;max-height:52vh}
+/* hr 竖排时是一条**竖线**才对（它是分隔，不是表格）——单独放行 */
+.nview-v hr{writing-mode:vertical-rl;height:70%;margin:0 .8em;border-top:0;
+  border-right:1px solid var(--line)}
+/* 横排子块里的字号别被竖排的 letter-spacing 放大 */
+.nview-v table,.nview-v pre{letter-spacing:normal}
+/* 深色主题：这里是**墨纸**，不是白纸 —— 纸的比喻要跟着主题换。
+   ⚠ 织质和界格的 rgba 是暖褐色（给浅纸用的），深色下要换成冷灰，否则看不见。 */
+:root[data-theme="dark"] .nview-v{
+  background:var(--soft2);
+  box-shadow:
+    inset 0 0 0 1px var(--card),
+    inset 0 0 0 5px transparent,
+    inset 0 0 0 6px var(--line),
+    inset 0 0 56px rgba(0,0,0,.45);
+}
+:root[data-theme="dark"] .nview-v::before{
+  background-image:
+    repeating-linear-gradient(90deg,
+      transparent 0 calc(2.1em - 1px), var(--line) calc(2.1em - 1px) 2.1em),
+    repeating-linear-gradient(0deg, rgba(200,210,225,.05) 0 1px, transparent 1px 4px),
+    repeating-linear-gradient(90deg, rgba(200,210,225,.05) 0 1px, transparent 1px 4px);
+  opacity:.6;
+}
+
+/* ---- 应急信息 ---- */
+.emcard{font-size:1rem;line-height:2}
+.emline{padding:1px 0}
+.emline.emhead{margin-top:12px;font-weight:700;color:var(--txt);
+  border-bottom:1px solid var(--line);padding-bottom:4px}
+.emline.emhead:first-child{margin-top:0}
+
+/* ---- 打印：只留应急信息那一块 ----
+   规则由 body.printing-em 限定（只有点「打印」的那一刻才加上这个类），
+   **故意不放进 
+/* ================================================================
+   应急信息（可编辑）
+   这张卡是「出事的时候别人要照着用」的，所以排版优先：
+   标签压小、值放大，一眼能扫到；打印时自动只留这一张卡。
+================================================================ */
+.emsub{margin:14px 0 6px;font-size:0.929rem;font-weight:600;color:var(--txt);
+  padding-left:9px;border-left:3px solid var(--blue)}
+.emsub:first-child{margin-top:0}
+.emgrid{display:grid;gap:6px 16px}
+.emgrid.c1{grid-template-columns:1fr}
+.emgrid.c2{grid-template-columns:repeat(2,minmax(0,1fr))}
+.emgrid.c3{grid-template-columns:repeat(3,minmax(0,1fr))}
+@media(max-width:900px){.emgrid.c3,.emgrid.c2{grid-template-columns:1fr}}
+.emf{display:flex;align-items:center;gap:7px;min-width:0}
+.emf .eml{flex:0 0 6.2em;width:6.2em;border:1px solid transparent;background:transparent;
+  color:var(--mut);font-size:0.857rem;text-align:right;padding:3px 4px;border-radius:5px}
+.emf .eml:hover{border-color:var(--line)}
+.emf .eml:focus{border-color:var(--blue);background:var(--card);color:var(--txt)}
+.emf .emv{flex:1 1 auto;min-width:0}
+.emtab{width:100%;border-collapse:collapse;margin-bottom:8px}
+.emtab th{text-align:left;font-size:0.857rem;font-weight:500;color:var(--mut);padding:3px 8px}
+.emtab td{padding:3px 8px 3px 0}
+.emtab input{width:100%}
+
+
+/* ================================================================
+   看图录入
+================================================================ */
+.shotdrop{border:2px dashed var(--line);border-radius:12px;padding:26px 16px;
+  text-align:center;color:var(--mut);cursor:pointer;transition:.15s;background:var(--soft)}
+.shotdrop:hover,.shotdrop.on{border-color:var(--blue);color:var(--blue);
+  background:var(--blue-l);border-style:solid}
+.shotbig{font-size:2.143rem;line-height:1.3;margin-bottom:6px}
+.shotprev{text-align:center;margin-top:12px}
+.shotprev img{max-width:100%;max-height:300px;border-radius:10px;
+  border:1px solid var(--line);display:inline-block}
+.shotdrop kbd{font-family:inherit;font-size:0.786rem;padding:1px 5px;border-radius:4px;
+  border:1px solid var(--line);background:var(--card);color:var(--txt2)}
+/* 识别结果清单。一屏可能十几条，所以给个最大高度自己滚，
+   不然弹窗会被撑得老长、底下的「确认录入」按钮跑出屏幕外。 */
+.shotlist{max-height:44vh;overflow:auto;border:1px solid var(--line);border-radius:10px}
+.shotlist table{margin:0}
+.shotlist th{position:sticky;top:0;z-index:1}
+.shotlist td{padding:3px 6px}
+.shotlist input[type=date]{width:132px}
+.shotlist input[type=number]{width:82px}
+.shotlist input[type=text],.shotlist input:not([type]){width:100%;min-width:90px}
+.shotlist select{max-width:118px}
+.shotlist tr.off{opacity:.42}
+
+@media print** —— 放进去的话页面 JS 就完全测不到它了，
+   而「打印出来到底是不是只有那一块」正是最该被测到的东西。
+   只有 @page 那条必须在 @media print 里。 */
+body.printing-em{background:#fff}
+body.printing-em .top,
+body.printing-em .settop,
+body.printing-em .setnav,
+body.printing-em .setsec:not([data-sec="应急"]),
+body.printing-em .ph-actions,
+body.printing-em .toast,
+body.printing-em .modal,
+body.printing-em .splash,
+body.printing-em #stale{display:none !important}
+body.printing-em .setwrap{display:block}
+body.printing-em .card{border:0;padding:0;margin:0;box-shadow:none}
+body.printing-em h2.sec{border:0;padding:0;font-size:1.429rem;margin:0 0 14px}
+body.printing-em .emcard{font-size:1.071rem;line-height:2.1}
+@media print{ @page{margin:18mm} }
+
+/* ---- 活跃热力图（2.3.6）----
+   一年 365 个格子。用 CSS grid 拼，**不引图表库** —— 一个 canvas 或者
+   再开一个 ECharts 实例都太重了，而这就是一堆同色小方块，grid 足够。
+   grid-auto-flow:column + 7 行 = 一列一周，跟 GitHub 一个排法。 */
+.heatmap{display:grid;grid-auto-flow:column;grid-template-rows:repeat(7,11px);
+  gap:3px;width:max-content;padding-bottom:2px}
+.heatmap i{display:block;width:11px;height:11px;border-radius:2.5px;
+  background:var(--soft2);cursor:default}
+.heatmap i.l1{background:color-mix(in srgb,var(--blue) 22%,var(--soft2))}
+.heatmap i.l2{background:color-mix(in srgb,var(--blue) 42%,var(--soft2))}
+.heatmap i.l3{background:color-mix(in srgb,var(--blue) 68%,var(--soft2))}
+.heatmap i.l4{background:var(--blue)}
+
+/* ---- 随笔 / 摘抄（2.3.6）---- */
+.qcard{border-left:3px solid var(--line)}
+.qtext{font-size:1.05rem;line-height:1.85;margin-bottom:4px;
+  font-family:"Kaiti SC","STKaiti",var(--font);white-space:pre-wrap}
+.qnote{margin-top:6px;font-size:.93rem;color:var(--txt2);padding-left:10px;
+  border-left:2px solid var(--soft2)}
+
+/* ---- 账单日历（2.3.6）---- */
+.bcal{display:grid;grid-template-columns:repeat(7,1fr);gap:5px;max-width:520px}
+.bcal i{display:block;aspect-ratio:1;border-radius:8px;font-style:normal;
+  font-size:.8rem;display:flex;flex-direction:column;align-items:center;
+  justify-content:center;color:var(--mut);background:var(--soft);
+  line-height:1.15;font-family:inherit}
+.bcal i.bw{background:transparent;aspect-ratio:auto;padding:2px 0;font-size:.72rem}
+.bcal i.bd{color:var(--txt)}
+.bcal i.bd.has{background:color-mix(in srgb,var(--blue) calc(var(--f) * 100%),var(--soft))}
+.bcal i.bd.today{outline:2px solid var(--blue);outline-offset:-2px;font-weight:700}
+/* 格格里的金额。等宽数字让同一列的金额上下对齐，一眼能比出「哪天花得多」 */
+.bcal i b{font-size:.64rem;font-weight:400;opacity:.9;font-variant-numeric:tabular-nums}
+
+/* ================================================================
+   2.3.7 收尾：压在照片上的字
+   ----------------------------------------------------------------
+   卡片现在是实心的，卡片里的字都有实底兜着，不用管。
+   但**页面级**那几处 —— 页头标题、区块标题、页脚 ——
+   是直接压在照片上的。--mut(#82878b) 在浅色照片上只有约 3:1 的对比，
+   用户的原话是「这些文字看不清了」「这些框也是」。
+
+   解法不是给它们各贴一张底（那就成了"每块都浮着一张卡片"，比雾还难看），
+   而是提一档颜色 + 配一层光晕：
+     · 次要文字 --mut → --txt2（浅色底上约 5.5:1）
+     · --txt-halo 是跟主题**相反**的一圈光：深色主题配黑、浅色配白，
+       照片再花也有一圈过渡把字托住（这套机制本来就有，只是漏了这几处）
+   只在开着背景图时才启用。没照片的时候一切照旧，不多一层东西。 */
+/* ⚠ 2.3.8 第二条：这几处**提到和标题同一个颜色**，不再用「浅一档」分主次。
+
+   2.3.7 那版给它们用了 --txt2（次文字色），实测在照片上只有 **2.97:1** ——
+   就是用户圈出来那句「大二上 · 共 104 条 · 数据文件…」。
+   原因不是颜色不够深，是**「用颜色分主次」这个手段在照片上根本不成立**：
+   卡片里的浅灰有实底垫着，永远能算出一个确切的对比度；
+   压在照片上时，同一个灰在照片的亮处糊掉、在暗处又太扎眼。
+   你没法给一个会变的背景配一个固定的字色。
+
+   所以这几处改成：**主次全部靠字号和字重来分**，颜色一律用正文色。
+   标题大一号、粗一点；说明小一号、常规字重 —— 层级仍然清楚，但每一层
+   都自己站得住。这条只在开着背景图时生效，没照片时一切照旧。 */
+:root.has-bg .pagehead .ph-sub,
+:root.has-bg .pagehead .ph-sub .mini,
+:root.has-bg .foot,
+:root.has-bg h2.sec .mini,
+:root.has-bg .settop .ph-sub,
+:root.has-bg .reclimit .mini,
+:root.has-bg .top .tab,
+:root.has-bg .top .sync,
+:root.has-bg .top .sem-pick,
+:root.has-bg .pagehead .ph-title,
+:root.has-bg h2.sec,
+:root.has-bg .settop .ph-title,
+:root.has-bg .top .brand{color:var(--txt)}
+
+/* ---- ⚠ 2.4.3：光晕**删掉了**，别再请回来 ----
+ *
+ * 2.3.7 加过 1px 光晕，2.3.8 加宽到 3px，理由是「照片是原图了，1px 托不住」。
+ * 2.4.3 把它整个删掉 —— 实测它**几乎不起作用**：
+ *
+ *     开着 3px 光晕   笔画 vs 周围  →  4.01:1
+ *     关掉           笔画 vs 周围  →  3.79:1
+ *
+ *   差 0.22。而代价是用户一眼就看见的：
+ *
+ *     深色照片上，一圈白光晕围着深色字，看起来就是**字有毛边**
+ *     （用户的原话）。因为那光本来就不是给深色底设计的 ——
+ *     白字发光才叫光晕，深字发白光只能叫"描了一圈白边"。
+ *
+ *   真正把可读性从 2.97 拉到 5.98 的是**颜色那一档**
+ *   （--mut → --txt），光晕是跟着一起加的、从来没单独验过。
+ *   这次量了才知道它是个搭便车的。
+ *
+ *   ⚠ 那深色照片上的字怎么办？——**靠「衬底」滑块**，那是用户自己
+ *     能控制的。程序没法既猜对每一块像素的明暗、又不留任何痕迹。
+ *     不要再用光晕去糊这个洞，那只会把字糊出毛边。 */
+
+/* 顶栏那三个窗控按钮。--mut 在深色顶栏上太淡（截图里那三个几乎看不见），
+   提到 --txt2；hover 时本来就有底色，够了。 */
+.winbtn{color:var(--txt2)}
+
+/* ---- 滚动条（2.3.7）----
+   用户原话：「深色模式这个滑动条背景应该变为透明一些，滑动条变为白色」。
+   截图里那根是一条**纯白轨道 + 深灰滑块**，又宽又抢眼 —— 那是
+   `color-scheme:light` 漏切（见文件开头）+ 从来没自定义过的默认外观。
+
+   现在：轨道透明，滑块 = 主题文字色兑到 22%（深色下就是近白、浅色下是浅灰），
+   悬停加深。**低存在感**是这一条的全部目的 —— 滚动条不该是页面上最重的一笔。 */
+::-webkit-scrollbar{width:11px;height:11px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:color-mix(in srgb,var(--txt) 22%,transparent);
+  border-radius:6px;border:3px solid transparent;background-clip:padding-box}
+::-webkit-scrollbar-thumb:hover{background:color-mix(in srgb,var(--txt) 40%,transparent);
+  background-clip:padding-box}
+::-webkit-scrollbar-corner{background:transparent}
+/* 标准属性（Firefox 认，Chromium 也认）写在根上 —— 这两个是**继承**的，
+   挂在 :root 就够，不用 `*` 给每个元素各写一份。 */
+:root{scrollbar-width:thin;
+  scrollbar-color:color-mix(in srgb,var(--txt) 22%,transparent) transparent}
+
+/* ---- 回忆书：会话列表 + 对话（2.4.1）----
+   左边一列会话（像微信那样能回翻），右边是对话本身。
+   ⚠ .mwrap 是竖着的 flex，中间这块必须 min-height:0 ——
+     不然它会按内容撑高，把底下那个输入框顶出屏幕（flex 子项默认不收缩）。*/
+.mbody{flex:1;display:grid;grid-template-columns:216px 1fr;min-height:0}
+.mbody .nside{border-radius:0;border-left:1px solid var(--line);
+  border-top:0;border-bottom:0;display:flex;flex-direction:column;min-height:0}
+.mbody .nlist{flex:1;overflow:auto;max-height:none}
+.mnew{margin:8px 10px;justify-content:center}
+.mbody .mlist{border-left:0}
+@media(max-width:820px){
+  .mbody{grid-template-columns:1fr}
+  .mbody .nside{display:none}   /* 窄屏先保对话，会话列表靠「新对话」旁边那个下拉 */
+}

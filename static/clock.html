@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="zh"><head><meta charset="utf-8"><title>牛马时钟</title>
+<link rel="stylesheet" href="/static/style.css">
+<style>
+/* 桌面小时钟（2.4.1）。
+   独立窗口，260×152，无边框、置顶。它是**照着 SpringNote 那个小组件**做的：
+   顶上状态+进度条、中间一个大数字、底下速率和计时。
+
+   ⚠ 这个页面不引 app.js —— 它只需要一个接口、一秒钟刷一次，
+     引整套前端等于为了看一眼钟把整个应用再装一遍。
+     代价是主题变量得自己去 /api/clock 里拿（那边顺手带上了）。 */
+html,body{height:100%;margin:0;overflow:hidden;background:transparent}
+.zw{
+  height:100%;box-sizing:border-box;padding:13px 15px 11px;
+  background:var(--card);color:var(--txt);
+  border:1px solid var(--line);border-radius:14px;
+  display:flex;flex-direction:column;justify-content:space-between;
+  box-shadow:0 6px 22px rgba(0,0,0,.16);
+  /* 整块能拖着走，但按钮要 no-drag，不然点不动 */
+  -webkit-app-region:drag;user-select:none;
+  font-family:var(--font);font-variant-numeric:tabular-nums;
+}
+.zw .top{display:flex;flex-direction:column;gap:6px}
+.zw .lvl{font-size:11.5px;color:var(--mut);letter-spacing:.2px;
+  display:flex;justify-content:space-between;align-items:baseline}
+.zw .bar{height:3px;border-radius:2px;background:var(--soft2);overflow:hidden}
+.zw .fill{height:100%;width:0;border-radius:2px;background:var(--blue);
+  transition:width .6s ease}
+.zw .big{font-size:34px;font-weight:600;letter-spacing:-1.2px;line-height:1;
+  margin:6px 0 2px;color:var(--txt)}
+.zw .bot{display:flex;justify-content:space-between;align-items:center;
+  font-size:11.5px;color:var(--txt2)}
+.zw .rate{color:var(--green);font-weight:600}
+.zw .tm{display:flex;align-items:center;gap:6px}
+.zw .dot{width:5px;height:5px;border-radius:50%;background:var(--green);flex:none;
+  position:relative}
+.zw .dot::after{content:"";position:absolute;inset:0;border-radius:50%;
+  background:var(--green);animation:pulse 3s ease-in-out infinite}
+@keyframes pulse{0%{transform:scale(1);opacity:.45}
+  55%{transform:scale(2.6);opacity:0}100%{transform:scale(1);opacity:0}}
+.zw.paused .dot,.zw.paused .rate{color:var(--mut);background:var(--mut)}
+.zw.paused .fill{background:var(--mut)}
+.zw .x{position:absolute;top:7px;right:8px;border:0;background:transparent;
+  color:var(--mut);cursor:pointer;font:inherit;font-size:13px;line-height:1;
+  padding:4px 6px;border-radius:7px;-webkit-app-region:no-drag}
+.zw .x:hover{background:var(--soft2);color:var(--txt)}
+.no-anim .zw .dot::after{animation:none}
+@media (prefers-reduced-motion:reduce){.zw .dot::after{animation:none}}
+</style></head><body>
+<div class="zw" id="zw">
+  <button class="x" id="x" title="关掉小时钟（随时可以再打开）">✕</button>
+  <div class="top">
+    <div class="lvl"><span id="lvl">—</span><span id="pct">—</span></div>
+    <div class="bar"><i class="fill" id="fill"></i></div>
+  </div>
+  <div class="big" id="earned">—</div>
+  <div class="bot">
+    <span class="rate" id="rate">—</span>
+    <span class="tm"><i class="dot"></i><span id="clock">--:--:--</span></span>
+  </div>
+</div>
+<script>
+"use strict";
+const $ = s => document.querySelector(s);
+const t0 = Date.now();
+let last = null;
+
+const money = v => "¥" + Number(v || 0).toLocaleString("zh-CN",
+  {minimumFractionDigits:2, maximumFractionDigits:2});
+const two = n => String(n).padStart(2, "0");
+
+/** 只在**跨过秒**时重写 DOM。
+ *  ⚠ 不这么写的话，一秒钟要重排好几次（requestAnimationFrame 更狠），
+ *    一个置顶的小窗一直占着 CPU —— 用户会先发现笔记本风扇响了。 */
+function paint() {
+  if (!last || !last.on) return;
+  const now = new Date();
+  const nowMin = now.getHours() * 60 + now.getMinutes() + now.getSeconds() / 60;
+  const startMin = last.start_h * 60 + last.start_m;
+  const total = last.hours * 60;
+  const done = Math.max(0, Math.min(nowMin - startMin, total));
+  const pct = total ? done / total : 0;
+  const earned = last.hourly * done / 60;
+  const secs = Math.floor(done * 60);
+  $("#earned").textContent = money(earned);
+  $("#clock").textContent = two(Math.floor(secs / 3600)) + ":" +
+    two(Math.floor(secs / 60) % 60) + ":" + two(secs % 60);
+  const before = nowMin < startMin, over = done >= total;
+  // 顶上那行是**等级**，不是"今天第几小时" —— 照 SpringNote 那张图来的：
+  // 等级 + 本级进度条 + 大数字 + 速率 + 计时。今天干到第几小时放在 tooltip 里。
+  $("#lvl").textContent = "Lv." + last.level + " " + last.level_name;
+  $("#pct").textContent = Math.round((last.level_pct || 0) * 100) + "%";
+  $("#fill").style.width = ((last.level_pct || 0) * 100).toFixed(1) + "%";
+  $("#zw").title = (before ? last.start + " 上班" : over ? "今天到点了"
+    : "今天第 " + (Math.floor(done / 60) + 1) + " 小时")
+    + " · 累计 " + last.total_hours + " 小时"
+    + (last.level_left_min ? " · 还差 " + Math.ceil(last.level_left_min / 60) + " 小时升级" : "");
+  $("#zw").classList.toggle("paused", before || over);
+}
+
+async function tick() {
+  try {
+    const r = await (await fetch("/api/clock", {cache: "no-store"})).json();
+    const d = r && r.data;
+    if (!d) return;
+    if (d.theme && d.theme !== "auto") document.documentElement.dataset.theme = d.theme;
+    document.documentElement.dataset.palette = d.palette || "素纸";
+    if (!d.on) {                       // 没填日薪 —— 别显示一个 ¥0.00 的钟
+      $("#lvl").textContent = "还没填日薪";
+      $("#pct").textContent = "";
+      $("#earned").textContent = "—";
+      $("#rate").textContent = "去 设置 → 个性化 填一下";
+      $("#clock").textContent = "--:--:--";
+      last = null;
+      return;
+    }
+    const [h, m] = String(d.start).split(":").map(Number);
+    last = Object.assign({}, d, {start_h: h, start_m: m});
+    $("#rate").textContent = "+" + money(d.hourly) + " / 时";
+  void pct;
+    paint();
+  } catch (e) { /* 后端还没起来 —— 下一拍再试 */ }
+}
+
+document.getElementById("x").onclick = async () => {
+  try {
+    if (window.xrShell && window.xrShell.clockClose) return void window.xrShell.clockClose();
+  } catch (e) { /* 不是壳里 */ }
+  window.close();
+};
+tick();
+setInterval(tick, 5000);          // 数字本身靠 paint 每秒走，这里只是偶尔对表
+setInterval(paint, 1000);
+document.addEventListener("visibilitychange", () => { if (!document.hidden) tick(); });
+</script></body></html>

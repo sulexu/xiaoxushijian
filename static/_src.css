@@ -1,0 +1,93 @@
+/* ================================================================
+   小煦拾简 · Tailwind / daisyUI 构建入口（2.5.1 起）
+   ----------------------------------------------------------------
+   生成 static/tw.css（约 240 KB）。**这个文件本身不被浏览器加载。**
+
+   ⚠ 别手改 tw.css —— 它是构建产物。改完这里要跑：npm run css
+
+   ⚠⚠ 这个项目里 Tailwind/daisyUI 和手写的 style.css **类名大量撞车**：
+     daisyUI 定义了 .card .btn .badge .modal .tab .hero .input .select .table …，
+     而应用也在用同名类。实测过的后果：daisyUI 的
+       `.hero{display:grid} .hero>*{grid-row-start:1;grid-column-start:1}`
+     把总览页 hero 里**所有子元素塞进同一个网格格子**，文字按钮全叠在一起。
+     排除了两个常见嫌疑（都不是）：
+       · 不是 preflight —— 生成的 CSS 里 h1,h2 / ul,ol / button, 一个都没有
+       · 不是变量撞车 —— tw.css 202 个变量 vs style.css 50 个，同名 0 个
+     **是类名词汇相同，两者不能共存，只能把应用迁到 daisyUI 的词汇上。**
+     迁移计划见 前端重写方案.md。
+================================================================ */
+/* ⚠⚠ 关键：**不要 Tailwind 的 preflight（base reset）**。
+   实测三次，每次都是它把界面弄坏，而且坏的地方不一样：
+     · 带完整 tailwind  → hero 区文字全叠住（.hero 撞名）
+     · 带 utilities     → 同样的叠住
+     · 加 prefix 去撞名 → **换成图标坏**：内联 <svg> 被 reset 成 display:block，
+                          hero 里的房子图标掉到标题下面、顶栏图标消失、按钮错位
+   根子是同一个：**这份 style.css 是在"没有 preflight"的前提下写了 20 个版本的**，
+   它从来没写过 `svg{display:inline-block}`、`h1{font-size:...}` 这类默认值 ——
+   因为以前不需要写。层叠只能决定"同一个属性谁赢"，
+   **代码里根本没写的属性它管不着**，所以放进低优先级 layer 也救不回来。
+   结论：只取 utilities + daisyUI（我们自己写的类），**不要 reset**。
+   下面这两条 import 就是 Tailwind 去掉 preflight 的写法。 */
+@import "tailwindcss/theme.css" layer(theme);
+@import "tailwindcss/utilities.css" layer(utilities);
+/* ⚠⚠ `prefix(ds)` 是这套方案的关键一招，别删。
+   不加前缀时 daisyUI 会定义 .card .btn .badge .modal .tab .hero .input .select .table …
+   而应用**也在用这些同名类** —— 实测后果：daisyUI 的
+     `.hero{display:grid}` + `.hero>*{grid-row-start:1;grid-column-start:1}`
+   把总览页 hero 里所有子元素塞进同一个网格格子，文字和按钮全叠在一起。
+   加前缀之后 daisyUI 的类变成 .ds-card / .ds-btn / .ds-hero …，**撞车消失**，
+   于是可以**一页一页地迁**：旧的手写 CSS 继续管没迁的部分，daisyUI 管迁好的部分，
+   中间任何时刻界面都是能用的（不会出现"全站坏掉等重写完"）。
+   不这么做的代价：1250 行 CSS + 262 个函数里的内联样式必须一次性改完，
+   而那期间程序是完全不可用的。 */
+@plugin "daisyui" {
+  themes: light --default, dark --prefersdark;
+  prefix: "ds-";
+}
+
+/* 从这些地方找用到的类名（Tailwind v4 靠扫描源码决定生成哪些原子类） */
+@source "./index.html";
+@source "./app.js";
+@source "./core.js";
+@source "./clock.html";
+
+/* ================================================================
+   第 0 步：设计令牌 —— 把项目原有的配色**指**给 daisyUI
+   ----------------------------------------------------------------
+   ⚠ 用 `@theme inline` 而不是直接写颜色值：
+     `inline` 让 Tailwind **原样输出** `var(--card)`，不要再包一层变量。
+     这样 daisyUI 的颜色就跟着 style.css 里那 7 套配色（素纸/青瓷/墨色/樱粉…）
+     和深浅两模式**一起动** —— 换主题时两边同时变，不会一个变一个不变。
+   ⚠ 只映射**已经存在**的变量。不去新增配色、不改任何现有取值。
+   ⚠ 这套映射是给**后续迁移**用的地基：迁到 daisyUI 的组件（.card/.btn/…）之后，
+     它们会自动拿到这套颜色，而不是 daisyUI 自带的蓝紫色。
+================================================================ */
+@theme inline {
+  /* 底色三层：页面底 / 卡片 / 更浅的分区 */
+  --color-base-100: var(--card);
+  --color-base-200: var(--soft);
+  --color-base-300: var(--soft2);
+  --color-base-content: var(--txt);
+
+  /* 主强调色（各配色不同：素纸是赭红、青瓷是青、墨色是灰蓝…） */
+  --color-primary: var(--blue);
+  --color-primary-content: var(--on-solid);
+
+  /* 状态色。项目里这几个是固定的，不跟配色变 */
+  --color-success: var(--green, #059669);
+  --color-warning: var(--amber, #d97706);
+  --color-error: var(--red, #dc2626);
+  --color-info: var(--blue);
+
+  /* 中性：次要文字 / 描边 */
+  --color-neutral: var(--txt2);
+  --color-neutral-content: var(--card);
+
+  /* 圆角：跟现有卡片一致（.card 用的 14px） */
+  --radius-box: 14px;
+  --radius-field: 8px;
+  --radius-selector: 8px;
+
+  /* 描边宽度：项目用的是 1px 细线 */
+  --border: 1px;
+}

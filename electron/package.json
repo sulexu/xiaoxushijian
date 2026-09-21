@@ -1,0 +1,76 @@
+{
+  "name": "stats-desktop",
+  "productName": "小煦拾简",
+  "version": "2.5.1",
+  "private": true,
+  "description": "小煦拾简桌面外壳：原生窗口 + 随包的 Python 后端",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder --win --dir"
+  },
+  "devDependencies": {
+    "electron": "^44.3.0",
+    "electron-builder": "^26.15.3"
+  },
+  "build": {
+    "appId": "local.personal.stats",
+    "productName": "小煦拾简",
+    "electronDist": "node_modules/electron/dist",
+    "directories": {
+      "output": "../_打包产物"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "../static",
+        "to": "static",
+        "filter": [
+          "**/*",
+          "!_*.html",
+          "!_*.js",
+          "!_*.css",
+          "!_*"
+        ]
+      },
+      {
+        "from": "../_build/dist/server",
+        "to": "."
+      }
+    ],
+    "extraFiles": [
+      {
+        "from": "启动.bat",
+        "to": "启动.bat"
+      },
+      {
+        "from": "浏览器版.bat",
+        "to": "浏览器版.bat"
+      }
+    ],
+    "electronLanguages": [
+      "zh-CN",
+      "en-US"
+    ],
+    "win": {
+      "target": [
+        "nsis"
+      ],
+      "icon": "build/icon.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "perMachine": false,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "小煦拾简",
+      "artifactName": "小煦拾简-${version}-安装版.${ext}",
+      "deleteAppDataOnUninstall": false
+    }
+  }
+}

@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="zh" data-palette="米黄" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>小煦拾简</title>
+<link rel="icon" href="/static/favicon.png">
+<!-- ⚠ tw.css 必须在 style.css **之前**。
+     它里面是 Tailwind 的 reset + daisyUI 的变量，全部包在 `@layer` 里；
+     而 style.css 是**未分层**的手写 CSS —— 按层叠规则未分层的一定赢。
+     所以顺序这样放：Tailwind 打底，现有样式覆盖它，**外观一行都不变**。
+     反过来的话（style.css 在前）Tailwind 的 reset 会盖住现有样式。
+     ⚠ 这个文件是**构建产物**（`npm run css` 生成），别手改。 -->
+<link rel="stylesheet" href="/static/tw.css">
+<link rel="stylesheet" href="/static/style.css">
+<script src="/static/echarts.min.js"></script>
+</head>
+<body>
+<header class="top">
+  <!-- 图标由 app.js 在启动时按 ICON 表注入（线条风 SVG），
+       HTML 里只留文字，免得同一个图标在两边各维护一份 -->
+  <div class="brand"><span class="bi" data-icon="logo"></span>小煦拾简</div>
+  <nav>
+    <button class="tab active" data-tab="over"><span class="bi" data-icon="home"></span>总览</button>
+    <button class="tab" data-tab="bill"><span class="bi" data-icon="wallet"></span>账单</button>
+    <button class="tab" data-tab="check"><span class="bi" data-icon="check"></span>打卡</button>
+    <button class="tab" data-tab="stock"><span class="bi" data-icon="box"></span>物资</button>
+    <button class="tab" data-tab="todo"><span class="bi" data-icon="list"></span>待办</button>
+    <button class="tab" data-tab="note"><span class="bi" data-icon="book"></span>日记</button>
+    <button class="tab" data-tab="essay"><span class="bi" data-icon="quote"></span>随笔</button>
+    <button class="tab" data-tab="memory"><span class="bi" data-icon="sparkle"></span>回忆书</button>
+    <button class="tab" data-tab="set"><span class="bi" data-icon="gear"></span>设置</button>
+  </nav>
+  <select id="semPick" class="sem-pick" title="切换学期（账单按学期分开存）"></select>
+  <div class="sync" id="syncTip" title="数据文件">—</div>
+</header>
+
+<div id="stale" class="stale" hidden></div>
+
+<main>
+  <section id="tab-over" class="tabbody"></section>
+  <section id="tab-bill" class="tabbody" hidden></section>
+  <section id="tab-check" class="tabbody" hidden></section>
+  <section id="tab-stock" class="tabbody" hidden></section>
+  <section id="tab-todo" class="tabbody" hidden></section>
+  <section id="tab-note" class="tabbody" hidden></section>
+  <section id="tab-essay" class="tabbody" hidden></section>
+  <section id="tab-memory" class="tabbody" hidden></section>
+  <section id="tab-set" class="tabbody" hidden></section>
+</main>
+
+<datalist id="dl-sug"></datalist>
+<!-- 开屏：纯 CSS 动画，不依赖 JS —— 万一 app.js 挂了也照样会自己淡出，不会糊住界面 -->
+<div id="splash" class="splash" title="点一下跳过">
+  <div class="splash-in">
+    <div class="splash-logo">拾</div>
+    <div class="splash-name">小煦拾简</div>
+    <div class="splash-slogan">煦光拾简，数观朝夕</div>
+    <div class="splash-poem">朝夕细碎，散若尘简<br>拾而录之，煦照流年</div>
+  </div>
+</div>
+<div id="lock" class="lock" hidden></div>
+<div id="toast" class="toast" hidden></div>
+<div id="modal" class="modal" hidden><div class="modal-card" id="modalCard"></div></div>
+
+<!-- ⚠⚠ 顺序有讲究，不能调换。
+     core.js 必须排第一：它声明了 109 个顶层 const/let（$, esc, money, colorOf,
+     BILL, charts, toast, modal, ICON …），后面每个文件都靠这些名字活着。
+     多个 <script> 共享同一个全局环境，所以只要顺序对，互相都看得见 ——
+     **不需要任何构建工具**，改完刷新就行。
+     ⚠ 往后面新增文件时，插在 core.js **之后**；别在两个文件里定义同名函数，
+       JS 是后定义者胜而且不报错，会静默盖掉前一个。 -->
+<script src="/static/core.js"></script>
+<script src="/static/app.js"></script>
+</body>
+</html>
